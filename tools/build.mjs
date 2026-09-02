@@ -22,6 +22,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { deflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -39,6 +40,7 @@ const COMMON_EXCLUDE = new Set([
   "dist",
   "tools",
   "package.json",
+  "README.md",
 ]);
 
 // Chrome-only artifacts that must NOT end up in the Firefox package.
@@ -142,6 +144,128 @@ function buildChrome() {
   return out;
 }
 
+/* -- ZIP writer (no third-party dependencies) -------------------------------- */
+
+// Minimal, dependency-free ZIP archive writer (deflate via node:zlib). Used to
+// package dist/firefox into a ready-to-submit file for addons.mozilla.org.
+
+let crcTable = null;
+function getCrcTable() {
+  if (!crcTable) {
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) {
+        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      }
+      crcTable[n] = c >>> 0;
+    }
+  }
+  return crcTable;
+}
+
+function crc32(buf) {
+  const table = getCrcTable();
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc = table[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Collects every file under `dir` as a ZIP entry (paths use forward slashes).
+// macOS Finder junk (.DS_Store / ._*) is skipped – never part of a package.
+function collectZipFiles(dir, prefix = "") {
+  const entries = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === ".DS_Store" || entry.name.startsWith("._")) continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      entries.push(...collectZipFiles(full, rel));
+    } else {
+      entries.push({ name: rel, data: readFileSync(full) });
+    }
+  }
+  return entries;
+}
+
+function buildZip(entries) {
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+
+  for (const { name, data } of entries) {
+    const crc = crc32(data);
+    const comp = deflateRawSync(data);
+    const nameBuf = Buffer.from(name, "utf8");
+
+    // Local file header.
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); // signature
+    local.writeUInt16LE(20, 4); // version needed to extract
+    local.writeUInt16LE(0, 6); // general purpose flags
+    local.writeUInt16LE(8, 8); // compression method: deflate
+    local.writeUInt16LE(0, 10); // last-mod time
+    local.writeUInt16LE(0, 12); // last-mod date
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(comp.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28); // extra field length
+
+    chunks.push(local, nameBuf, comp);
+
+    // Central directory header.
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0); // signature
+    cd.writeUInt16LE(20, 4); // version made by
+    cd.writeUInt16LE(20, 6); // version needed to extract
+    cd.writeUInt16LE(0, 8); // flags
+    cd.writeUInt16LE(8, 10); // method
+    cd.writeUInt16LE(0, 12); // mod time
+    cd.writeUInt16LE(0, 14); // mod date
+    cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(comp.length, 20);
+    cd.writeUInt32LE(data.length, 24);
+    cd.writeUInt16LE(nameBuf.length, 28);
+    cd.writeUInt16LE(0, 30); // extra field length
+    cd.writeUInt16LE(0, 32); // comment length
+    cd.writeUInt16LE(0, 34); // disk number start
+    cd.writeUInt16LE(0, 36); // internal attributes
+    cd.writeUInt32LE(0, 38); // external attributes
+    cd.writeUInt32LE(offset, 42); // offset of local header
+
+    // A central directory record is the fixed header above FOLLOWED by the
+    // file name (and optional extra/comment fields, none here).
+    central.push(cd, nameBuf);
+    offset += local.length + nameBuf.length + comp.length;
+  }
+
+  const centralStart = offset;
+  const centralBuf = Buffer.concat(central);
+
+  // End of central directory record.
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); // signature
+  eocd.writeUInt16LE(0, 4); // this disk number
+  eocd.writeUInt16LE(0, 6); // disk with central directory
+  eocd.writeUInt16LE(entries.length, 8); // entries on this disk
+  eocd.writeUInt16LE(entries.length, 10); // total entries
+  eocd.writeUInt32LE(centralBuf.length, 12);
+  eocd.writeUInt32LE(centralStart, 16);
+  eocd.writeUInt16LE(0, 20); // comment length
+
+  return Buffer.concat([...chunks, centralBuf, eocd]);
+}
+
+// Packages the contents of `dir` into `<distDir>/<zipName>` and returns the path.
+function writeZip(dir, zipName) {
+  const out = join(distDir, zipName);
+  writeFileSync(out, buildZip(collectZipFiles(dir)));
+  return out;
+}
+
 rmSync(distDir, { recursive: true, force: true });
 mkdirSync(distDir, { recursive: true });
 
@@ -149,8 +273,14 @@ const targetArg = process.argv.indexOf("--target");
 const target = targetArg >= 0 ? process.argv[targetArg + 1] || "all" : "all";
 
 const results = [];
+let firefoxZip = null;
 if (target === "firefox" || target === "all") {
-  results.push(["Firefox", buildFirefox()]);
+  const out = buildFirefox();
+  results.push(["Firefox", out]);
+  // Ready-to-submit AMO package: the dist/firefox content as a zip.
+  const version = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"))
+    .version;
+  firefoxZip = writeZip(out, `firefox-${version}.zip`);
 }
 if (target === "chrome" || target === "all") {
   results.push(["Chrome", buildChrome()]);
@@ -160,13 +290,14 @@ console.log("Build finished:");
 for (const [name, dir] of results) {
   console.log(`  ${name}: ${dir}`);
 }
+if (firefoxZip) {
+  console.log(`  Firefox-ZIP (fertig für AMO): ${firefoxZip}`);
+}
 if (target === "chrome" || target === "all") {
   console.log(
     "  → Chrome testen: chrome://extensions → „Entwicklermodus“ → „Entpackte Erweiterung laden“ → dist/chrome",
   );
 }
 if (target === "firefox" || target === "all") {
-  console.log(
-    "  → Firefox: dieser Quellbaum selbst (npm run lint / run), Verpacken z. B. mit web-ext build",
-  );
+  console.log("  → Firefox-ZIP direkt bei addons.mozilla.org einreichen.");
 }
