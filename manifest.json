@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Watcharr Scrobbler — Netflix",
-  "version": "1.0.0",
+  "version": "1.0",
   "description": "Automatically scrobbles what you watch on Netflix into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
   "browser_specific_settings": {
     "gecko": {
       "id": "watcharr-scrobbler@mattw",
-      "strict_min_version": "115.0"
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent"]
+      }
     }
   },
   "permissions": ["storage", "scripting"],

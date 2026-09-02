@@ -64,6 +64,17 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+// Builds DOM nodes from an HTML string that was composed in this file with
+// every dynamic value passed through escapeHtml(). DOMParser never executes
+// scripts; the parsed nodes are attached directly instead of using innerHTML.
+function replaceFromHtml(element, html) {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  element.replaceChildren();
+  for (const node of Array.from(parsed.body.childNodes)) {
+    element.appendChild(node);
+  }
+}
+
 let statusTimer = null; // Auto-hide timer for success popup
 
 function setStatus(kind, text) {
@@ -334,7 +345,7 @@ function updateHint() {
 
 function buildRow(it) {
   const wrap = document.createElement("div");
-  wrap.innerHTML = rowHtml(it);
+  replaceFromHtml(wrap, rowHtml(it));
   return wrap.firstChild;
 }
 
@@ -357,8 +368,10 @@ function render() {
       : allLoaded
         ? ts("history.emptyHistory")
         : ts("history.reloadHint");
-    els.list.innerHTML =
-      '<div class="list-hint">' + escapeHtml(emptyText) + "</div>";
+    replaceFromHtml(
+      els.list,
+      '<div class="list-hint">' + escapeHtml(emptyText) + "</div>",
+    );
     updateImportButton();
     return;
   }
@@ -425,8 +438,10 @@ async function load() {
     maybeLoadMore();
   } catch (err) {
     setStatus("error", err.message);
-    els.list.innerHTML =
-      '<div class="list-hint">' + escapeHtml(err.message) + "</div>";
+    replaceFromHtml(
+      els.list,
+      '<div class="list-hint">' + escapeHtml(err.message) + "</div>",
+    );
   }
 }
 
@@ -519,14 +534,16 @@ els.list.addEventListener("click", async (e) => {
   const panel = document.createElement("div");
   panel.className = "rematch-panel";
   panel.dataset.key = key;
-  panel.innerHTML =
+  replaceFromHtml(
+    panel,
     '<input type="search" placeholder="' +
-    escapeHtml(ts("history.searchTitle")) +
-    '" autocomplete="off" />' +
-    '<div class="hint">' +
-    escapeHtml(ts("history.searchHint")) +
-    "</div>" +
-    '<div class="rematch-results"></div>';
+      escapeHtml(ts("history.searchTitle")) +
+      '" autocomplete="off" />' +
+      '<div class="hint">' +
+      escapeHtml(ts("history.searchHint")) +
+      "</div>" +
+      '<div class="rematch-results"></div>',
+  );
   row.after(panel);
   const input = panel.querySelector("input");
   input.focus();
@@ -535,8 +552,10 @@ els.list.addEventListener("click", async (e) => {
     const q = input.value.trim();
     if (q.length < 2) return;
     const resultsBox = panel.querySelector(".rematch-results");
-    resultsBox.innerHTML =
-      '<div class="hint">' + escapeHtml(ts("history.searching")) + "</div>";
+    replaceFromHtml(
+      resultsBox,
+      '<div class="hint">' + escapeHtml(ts("history.searching")) + "</div>",
+    );
     try {
       const resp = await browser.runtime.sendMessage({
         type: "watcharr:search",
@@ -546,8 +565,10 @@ els.list.addEventListener("click", async (e) => {
       const results =
         resp && resp.ok ? (resp.data && resp.data.results) || [] : [];
       if (!results.length) {
-        resultsBox.innerHTML =
-          '<div class="hint">' + escapeHtml(ts("history.noResults")) + "</div>";
+        replaceFromHtml(
+          resultsBox,
+          '<div class="hint">' + escapeHtml(ts("history.noResults")) + "</div>",
+        );
         return;
       }
       resultsBox.innerHTML = "";
@@ -555,19 +576,21 @@ els.list.addEventListener("click", async (e) => {
         const item = document.createElement("div");
         item.className = "rematch-result";
         const poster = r.extPosterPath ? TMDB_IMG + r.extPosterPath : null;
-        item.innerHTML =
+        replaceFromHtml(
+          item,
           (poster
             ? '<img class="poster" src="' + escapeHtml(poster) + '" alt="" />'
             : '<div class="poster ph"></div>') +
-          '<div class="info"><div class="name">' +
-          escapeHtml(r.name || "") +
-          "</div>" +
-          '<div class="meta">' +
-          escapeHtml(
-            (r.type || "").replace("tmdb_", "") +
-              (r.releaseDate ? " · " + String(r.releaseDate).slice(0, 4) : ""),
-          ) +
-          "</div></div>";
+            '<div class="info"><div class="name">' +
+            escapeHtml(r.name || "") +
+            "</div>" +
+            '<div class="meta">' +
+            escapeHtml(
+              (r.type || "").replace("tmdb_", "") +
+                (r.releaseDate ? " · " + String(r.releaseDate).slice(0, 4) : ""),
+            ) +
+            "</div></div>",
+        );
         item.addEventListener("click", () => {
           rematch(key, r);
           panel.remove();
@@ -575,10 +598,12 @@ els.list.addEventListener("click", async (e) => {
         resultsBox.appendChild(item);
       }
     } catch (err) {
-      resultsBox.innerHTML =
+      replaceFromHtml(
+        resultsBox,
         '<div class="hint">' +
-        escapeHtml(ts("history.searchFailed", { error: err.message })) +
-        "</div>";
+          escapeHtml(ts("history.searchFailed", { error: err.message })) +
+          "</div>",
+      );
     }
   };
 

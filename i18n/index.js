@@ -96,6 +96,64 @@
     return /\{\s*[\w.-]+\s*\}/.test(value);
   }
 
+  // -- Trusted inline markup ---------------------------------------------------
+  // `data-i18n-html` values are authored by us in i18n/translations/*.json and
+  // may contain a small set of inline formatting tags (e.g. <em>). We never
+  // assign these strings to innerHTML; instead they are parsed with DOMParser
+  // (which never executes scripts) and only allow-listed tags are rebuilt as
+  // DOM nodes, with every attribute dropped.
+  const TRUSTED_INLINE_TAGS = new Set([
+    "EM",
+    "STRONG",
+    "B",
+    "I",
+    "CODE",
+    "BR",
+    "SPAN",
+  ]);
+
+  // Recursively copies `sourceNodes` (parsed by DOMParser) into `target` using
+  // nodes of the live document. Unknown tags are dropped but their text
+  // content is kept, so unexpected markup degrades to plain text.
+  function appendTrustedNodes(target, sourceNodes) {
+    for (const node of sourceNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        target.appendChild(document.createTextNode(node.nodeValue));
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = node.tagName.toUpperCase();
+        if (!TRUSTED_INLINE_TAGS.has(tag)) {
+          appendTrustedNodes(target, node.childNodes);
+          continue;
+        }
+        if (tag === "BR") {
+          target.appendChild(document.createElement("br"));
+          continue;
+        }
+        const el = document.createElement(tag.toLowerCase());
+        appendTrustedNodes(el, node.childNodes); // attributes are not copied
+        target.appendChild(el);
+      }
+    }
+  }
+
+  // Parses a trusted HTML string into a detached DocumentFragment containing
+  // only allow-listed inline elements (see above).
+  function trustedMarkupToFragment(html) {
+    const parsed = new DOMParser().parseFromString(
+      String(html == null ? "" : html),
+      "text/html",
+    );
+    const fragment = document.createDocumentFragment();
+    appendTrustedNodes(fragment, parsed.body.childNodes);
+    return fragment;
+  }
+
+  // Replaces the content of `element` with the rendered trusted markup.
+  function setTrustedMarkup(element, html) {
+    element.replaceChildren();
+    element.appendChild(trustedMarkupToFragment(html));
+  }
+
   async function applyTranslations(locale, rootNode = document) {
     const resolvedLocale = resolveLocale(locale || readLocale());
     const translations = await loadTranslations(resolvedLocale);
@@ -110,11 +168,12 @@
     });
 
     // Translation values may contain trusted inline markup (e.g. <em>).
+    // Rendered via the safe allow-list helper above instead of innerHTML.
     node.querySelectorAll("[data-i18n-html]").forEach((element) => {
       const key = element.getAttribute("data-i18n-html");
       const value = getValue(translations, key);
       if (value !== undefined && !needsRuntimeParams(value)) {
-        element.innerHTML = interpolate(value, {});
+        setTrustedMarkup(element, interpolate(value, {}));
       }
     });
 
@@ -144,6 +203,8 @@
     t,
     tSync,
     applyTranslations,
+    setTrustedMarkup,
+    trustedMarkupToFragment,
     init,
     localeApi,
   };

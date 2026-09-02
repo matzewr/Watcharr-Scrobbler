@@ -191,9 +191,21 @@ async function updateStepText(threshold) {
   if (!els.stepsText) return;
   const before = await t("settings.step4Before");
   const after = await t("settings.step4After");
-  els.stepsText.innerHTML =
-    before + ' <span id="stepsThreshold">' + threshold + "</span>" + after;
-  els.stepsThreshold = document.querySelector("#stepsThreshold");
+  // Build the sentence with plain text + a real <span>; `after` comes from our
+  // own translations and may contain trusted inline markup (e.g. <em>), so it
+  // is rendered through the safe allow-list helper (never innerHTML).
+  const trustedMarkup =
+    window.watcharrI18n && window.watcharrI18n.trustedMarkupToFragment;
+  els.stepsText.replaceChildren();
+  els.stepsText.appendChild(document.createTextNode(before + " "));
+  const span = document.createElement("span");
+  span.id = "stepsThreshold";
+  span.textContent = String(threshold);
+  els.stepsText.appendChild(span);
+  els.stepsText.appendChild(
+    trustedMarkup ? trustedMarkup(after) : document.createTextNode(after || ""),
+  );
+  els.stepsThreshold = span;
 }
 
 // `persist` stores the language as an explicit user choice (mirror for sync
