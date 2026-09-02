@@ -40,6 +40,7 @@ const COMMON_EXCLUDE = new Set([
   "dist",
   "tools",
   "package.json",
+  "package-lock.json",
   "README.md",
 ]);
 
