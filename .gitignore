@@ -1,0 +1,7 @@
+node_modules/
+web-ext-artifacts/
+dist/
+*.zip
+.DS_Store
+__pycache__/
+.venv/

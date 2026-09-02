@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="history.title">Watcharr Scrobbler – History</title>
+    <link rel="stylesheet" href="history.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="../icons/icon-48.png" alt="Logo" />
+        <div>
+          <h1 data-i18n="history.pageTitle">Netflix history</h1>
+          <p class="sub" data-i18n="history.pageSubtitle">
+            Netflix ↔ Watcharr comparison
+          </p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="reloadBtn" class="ghost" data-i18n="history.reload">
+          Reload
+        </button>
+      </div>
+    </header>
+
+    <section id="statusBar" class="status hidden"></section>
+
+    <section class="toolbar">
+      <button id="selectAllBtn" class="ghost" data-i18n="history.selectAll">
+        Select all
+      </button>
+      <button id="selectNoneBtn" class="ghost" data-i18n="history.selectNone">
+        Select none
+      </button>
+      <span class="spacer"></span>
+      <input
+        id="filterBox"
+        type="search"
+        data-i18n-placeholder="history.filterPlaceholder"
+        placeholder="Filter …"
+        autocomplete="off"
+      />
+      <button
+        id="importBtn"
+        class="primary"
+        disabled
+        data-i18n="history.importSelected"
+      >
+        Import selected (0)
+      </button>
+    </section>
+
+    <section id="list" class="list">
+      <div class="list-hint" data-i18n="history.loadingHistory">
+        History is loading …
+      </div>
+    </section>
+
+    <script src="../i18n/locale.js"></script>
+    <script src="../i18n/formatters.js"></script>
+    <script src="../i18n/index.js"></script>
+    <script src="history.js"></script>
+  </body>
+</html>

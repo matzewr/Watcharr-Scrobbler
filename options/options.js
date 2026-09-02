@@ -1,0 +1,524 @@
+/*
+ * Watcharr Scrobbler – Options page.
+ * Manages Watcharr URL, login (token), language selection, and scrobbling settings.
+ */
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+const I18NApi = window.i18n || {
+  resolveLanguage: (lang) => (lang === "de" ? "de" : "en"),
+  loadLanguage: async (lang) => (lang === "de" ? "de" : "en"),
+  translate: async (key, lang, params = {}) => key,
+  applyTranslations: async () => {},
+};
+
+let currentLanguage = I18NApi.resolveLanguage("en");
+
+// Active login method and the providers the server currently reports as
+// available (auto-detected via GET /api/auth/available).
+let method = "watcharr"; // "watcharr" | "jellyfin" | "plex"
+let methodOptions = ["watcharr"];
+let useEmby = false;
+let configured = false;
+let plexPopup = null;
+let plexPolling = false;
+let plexStartedAt = 0;
+let detectTimer = null;
+
+const els = {
+  url: $("#watcharrUrl"),
+  username: $("#username"),
+  password: $("#password"),
+  language: $("#language"),
+  loginBtn: $("#loginBtn"),
+  logoutBtn: $("#logoutBtn"),
+  enabled: $("#enabled"),
+  threshold: $("#threshold"),
+  thresholdValue: $("#thresholdValue"),
+  stepsThreshold: $("#stepsThreshold"),
+  stepsText: $("#stepsText"),
+  banner: $("#status-banner"),
+  generalBanner: $("#general-banner"),
+  historyBtn: $("#historyBtn"),
+  methodField: $("#methodField"),
+  providerGroup: $("#providerGroup"),
+  methodHint: $("#methodHint"),
+  usernameField: $("#usernameField"),
+  passwordField: $("#passwordField"),
+};
+
+async function t(key, params = {}) {
+  return I18NApi.translate(key, currentLanguage, params);
+}
+
+function populateLanguageOptions() {
+  if (!els.language) return;
+  const loc = I18NApi.locale || window.watcharrI18nLocale || {};
+  const supported = loc.SUPPORTED_LOCALES || ["en", "de", "fr"];
+  const names = loc.LANGUAGE_NAMES || {
+    en: "English",
+    de: "Deutsch",
+    fr: "Français",
+  };
+  els.language.innerHTML = "";
+  supported.forEach((code) => {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = names[code] || code;
+    els.language.appendChild(option);
+  });
+}
+
+populateLanguageOptions();
+
+function showBanner(kind, text) {
+  els.banner.className = "banner " + kind;
+  els.banner.textContent = text;
+}
+
+function showGeneralBanner(kind, text) {
+  els.generalBanner.className = "banner " + kind;
+  els.generalBanner.textContent = text;
+}
+
+function clearBanner() {
+  els.banner.className = "banner hidden";
+  els.banner.textContent = "";
+}
+
+/* ---------- Login method (Watcharr / Jellyfin / Plex) ---------- */
+
+function loginLabelKey(m) {
+  return m === "jellyfin"
+    ? "settings.connectJellyfin"
+    : m === "plex"
+      ? "settings.connectPlex"
+      : "settings.saveConnect";
+}
+
+// Emby is a server-side setting (useEmby). When on, Watcharr labels the same
+// "jellyfin" method as "emby" – mirror that on the button.
+function refreshProviderLabels() {
+  const btn = els.providerGroup.querySelector('[data-method="jellyfin"]');
+  if (btn && useEmby) btn.textContent = "Emby";
+}
+
+function renderProviders(list) {
+  methodOptions = list.slice();
+  ["watcharr", "jellyfin", "plex"].forEach((m) => {
+    const btn = els.providerGroup.querySelector('[data-method="' + m + '"]');
+    if (btn) btn.classList.toggle("hidden", !list.includes(m));
+  });
+  refreshProviderLabels();
+  if (!list.includes(method)) {
+    selectMethod("watcharr");
+  } else {
+    updateLoginView();
+  }
+}
+
+async function selectMethod(next) {
+  method = next;
+  updateLoginView();
+}
+
+function updateLoginView() {
+  if (plexPolling) return; // keep the "Waiting for Plex…" state stable
+  els.providerGroup.querySelectorAll(".provider").forEach((b) => {
+    b.classList.toggle("active", b.dataset.method === method);
+  });
+  // Jellyfin/Watcharr use username + password; Plex only opens a popup.
+  const creds = method === "watcharr" || method === "jellyfin";
+  els.usernameField.classList.toggle("hidden", !creds);
+  els.passwordField.classList.toggle("hidden", !creds);
+  els.loginBtn.disabled = false;
+
+  t(loginLabelKey(method)).then((label) => {
+    if (!els.loginBtn.disabled) els.loginBtn.textContent = label;
+  });
+
+  const hintKey =
+    method === "jellyfin"
+      ? "settings.jellyfinHint"
+      : method === "plex"
+        ? "settings.plexHint"
+        : "";
+  if (hintKey) {
+    t(hintKey).then((hint) => {
+      els.methodHint.textContent = hint;
+    });
+    els.methodHint.classList.remove("hidden");
+  } else {
+    els.methodHint.classList.add("hidden");
+    els.methodHint.textContent = "";
+  }
+}
+
+// Ask the server which login providers are enabled and show only those.
+async function detectProviders() {
+  const url = els.url.value.trim();
+  let available = [];
+  useEmby = false;
+  if (url && !configured) {
+    try {
+      const resp = await browser.runtime.sendMessage({
+        type: "watcharr:auth:available",
+        url,
+      });
+      if (resp && resp.ok) {
+        available = resp.available || [];
+        useEmby = !!resp.useEmby;
+      }
+    } catch (_) {
+      // Server unreachable -> fall back to showing only the Watcharr login.
+    }
+  }
+  const list = ["watcharr"];
+  if (available.includes("jellyfin")) list.push("jellyfin");
+  if (available.includes("plex")) list.push("plex");
+  renderProviders(list);
+}
+
+function setLoginBusy(busy, label) {
+  els.loginBtn.disabled = busy;
+  if (label !== undefined) els.loginBtn.textContent = label;
+  els.providerGroup.querySelectorAll(".provider").forEach((b) => {
+    b.disabled = busy;
+  });
+}
+
+async function updateStepText(threshold) {
+  if (!els.stepsText) return;
+  const before = await t("settings.step4Before");
+  const after = await t("settings.step4After");
+  els.stepsText.innerHTML =
+    before + ' <span id="stepsThreshold">' + threshold + "</span>" + after;
+  els.stepsThreshold = document.querySelector("#stepsThreshold");
+}
+
+// `persist` stores the language as an explicit user choice (mirror for sync
+// reads). Auto-detected languages must NOT be persisted – otherwise the
+// "use the browser language" default would be frozen after the first load.
+async function applyLanguage(lang, persist = false) {
+  currentLanguage = I18NApi.resolveLanguage(lang);
+  await I18NApi.applyTranslations(currentLanguage, document);
+  document.documentElement.lang = currentLanguage;
+  if (els.language) els.language.value = currentLanguage;
+  if (persist) {
+    const loc = I18NApi.locale || window.watcharrI18nLocale;
+    if (loc && loc.writeLocale) loc.writeLocale(currentLanguage);
+  }
+  // (Re-)apply the Emby override after the static data-i18n sweep.
+  refreshProviderLabels();
+}
+
+async function load() {
+  const resp = await browser.runtime.sendMessage({ type: "watcharr:getState" });
+  if (!resp || !resp.ok) return;
+
+  const s = resp.settings;
+  configured = !!s.configured;
+
+  // `s.language` is "" while no language has been chosen yet -> resolve to
+  // the browser language (detected in i18n/locale.js). Only persist a mirror
+  // when the language was explicitly stored.
+  currentLanguage = I18NApi.resolveLanguage(s.language || "");
+  await applyLanguage(currentLanguage, !!s.language);
+
+  els.url.value = s.watcharrUrl || "";
+  els.username.value = s.username || "";
+  els.enabled.checked = s.enabled !== false;
+  els.threshold.value = s.threshold || 90;
+  els.thresholdValue.value = s.threshold + " %";
+  els.stepsThreshold.textContent = s.threshold || 90;
+  await updateStepText(s.threshold || 90);
+
+  if (configured) {
+    // Connected: the method selector is not needed (the stored token is used).
+    method = "watcharr";
+    els.methodField.classList.add("hidden");
+    els.usernameField.classList.remove("hidden");
+    els.passwordField.classList.remove("hidden");
+    els.logoutBtn.classList.remove("hidden");
+    els.password.placeholder = await t("settings.passwordPlaceholder");
+    showBanner(
+      "success",
+      await t("settings.connected", { username: s.username || "?" }),
+    );
+  } else {
+    els.methodField.classList.remove("hidden");
+    els.logoutBtn.classList.add("hidden");
+    showBanner("info", await t("settings.notConfigured"));
+    if (!methodOptions.includes(method)) method = "watcharr";
+    updateLoginView();
+    detectProviders();
+  }
+}
+
+async function login() {
+  if (plexPolling) return;
+  if (method === "plex") {
+    await startPlexLogin();
+    return;
+  }
+  const url = els.url.value.trim();
+  const username = els.username.value.trim();
+  const password = els.password.value;
+
+  if (!url || !username || !password) {
+    showBanner("error", await t("settings.missingFields"));
+    return;
+  }
+
+  setLoginBusy(true, await t("settings.connecting"));
+  clearBanner();
+
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: "watcharr:login",
+      url,
+      username,
+      password,
+      method: method === "jellyfin" ? "jellyfin" : "watcharr",
+    });
+    if (resp && resp.ok) {
+      els.password.value = "";
+      showBanner(
+        "success",
+        await t("settings.connected", { username: resp.username }),
+      );
+      await load();
+    } else {
+      showBanner(
+        "error",
+        await t("settings.loginFailed", {
+          error: resp ? resp.error : "unknown error",
+        }),
+      );
+    }
+  } catch (err) {
+    showBanner(
+      "error",
+      await t("settings.loginFailed", { error: err.message }),
+    );
+  } finally {
+    setLoginBusy(false, await t(loginLabelKey(method)));
+  }
+}
+
+/* ---------- Plex OAuth (plex.tv popup) ---------- */
+
+async function startPlexLogin() {
+  const url = els.url.value.trim();
+  if (!url) {
+    showBanner("error", await t("settings.missingUrl"));
+    return;
+  }
+  if (plexPolling) return;
+
+  // Open the popup synchronously while the click's user activation is valid
+  // (popup blockers would otherwise swallow it). The real plex.tv URL is set
+  // below once the pin has been created.
+  let popup = null;
+  try {
+    popup = window.open(
+      "",
+      "Watcharr · Plex Login",
+      "width=600,height=800,scrollbars=yes",
+    );
+  } catch (_) {
+    popup = null;
+  }
+
+  clearBanner();
+  setLoginBusy(true, await t("settings.plexWaiting"));
+  plexStartedAt = Date.now();
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: "watcharr:plex:begin",
+      url,
+    });
+    if (!resp || !resp.ok)
+      throw new Error(resp ? resp.error : "Could not start Plex login.");
+    if (!popup) throw new Error(await t("settings.plexPopupBlocked"));
+
+    plexPopup = popup;
+    popup.location.href = resp.authUrl;
+    popup.focus();
+    plexPolling = true;
+    pollPlex();
+  } catch (err) {
+    try {
+      if (popup) popup.close();
+    } catch (_) {}
+    setLoginBusy(false);
+    updateLoginView();
+    showBanner(
+      "error",
+      await t("settings.loginFailed", { error: err.message }),
+    );
+  }
+}
+
+async function pollPlex() {
+  if (!plexPolling) return;
+
+  // Safety net: the plex.tv pin expires after a few minutes.
+  if (Date.now() - plexStartedAt > 5 * 60 * 1000) {
+    stopPlexPolling();
+    showBanner("info", await t("settings.plexTimeout"));
+    return;
+  }
+
+  let resp = null;
+  try {
+    resp = await browser.runtime.sendMessage({ type: "watcharr:plex:poll" });
+  } catch (_) {
+    resp = null; // transient background error -> keep polling
+  }
+
+  if (resp && resp.ok && resp.authToken) {
+    await finishPlexLogin(resp.authToken);
+    return;
+  }
+  if (resp && resp.ok === false && /no active/i.test(resp.error || "")) {
+    stopPlexPolling();
+    showBanner("info", await t("settings.plexTimeout"));
+    return;
+  }
+  if (plexPopup && plexPopup.closed) {
+    stopPlexPolling();
+    showBanner("info", await t("settings.plexClosed"));
+    return;
+  }
+  setTimeout(pollPlex, 1500);
+}
+
+function stopPlexPolling() {
+  plexPolling = false;
+  try {
+    if (plexPopup) plexPopup.close();
+  } catch (_) {}
+  plexPopup = null;
+  setLoginBusy(false);
+  updateLoginView();
+}
+
+async function finishPlexLogin(authToken) {
+  plexPolling = false;
+  try {
+    if (plexPopup) plexPopup.close();
+  } catch (_) {}
+  plexPopup = null;
+  const url = els.url.value.trim();
+  try {
+    const resp = await browser.runtime.sendMessage({
+      type: "watcharr:loginPlex",
+      url,
+      token: authToken,
+    });
+    if (resp && resp.ok) {
+      setLoginBusy(false);
+      showBanner(
+        "success",
+        await t("settings.connected", { username: resp.username || "Plex" }),
+      );
+      await load();
+    } else {
+      setLoginBusy(false);
+      updateLoginView();
+      showBanner(
+        "error",
+        await t("settings.loginFailed", {
+          error: resp ? resp.error : "unknown error",
+        }),
+      );
+    }
+  } catch (err) {
+    setLoginBusy(false);
+    updateLoginView();
+    showBanner(
+      "error",
+      await t("settings.loginFailed", { error: err.message }),
+    );
+  }
+}
+
+async function logout() {
+  await browser.runtime.sendMessage({ type: "watcharr:logout" });
+  if (plexPolling) {
+    plexPolling = false;
+    try {
+      if (plexPopup) plexPopup.close();
+    } catch (_) {}
+    plexPopup = null;
+  }
+  els.username.value = "";
+  els.password.value = "";
+  els.password.placeholder = await t("settings.passwordPlaceholder");
+  els.logoutBtn.classList.add("hidden");
+  method = "watcharr";
+  showBanner("success", await t("settings.loggedOut"));
+  await load();
+}
+
+async function saveBehaviour() {
+  await browser.runtime.sendMessage({
+    type: "watcharr:saveSettings",
+    settings: {
+      enabled: els.enabled.checked,
+      threshold: parseInt(els.threshold.value, 10),
+      // language is intentionally NOT included: it is only persisted when the
+      // user picks one explicitly in the language dropdown.
+    },
+  });
+  await applyLanguage(els.language ? els.language.value : currentLanguage);
+  await updateStepText(parseInt(els.threshold.value, 10));
+}
+
+els.historyBtn.addEventListener("click", () => {
+  browser.tabs.create({ url: browser.runtime.getURL("history/history.html") });
+});
+
+els.loginBtn.addEventListener("click", login);
+els.logoutBtn.addEventListener("click", logout);
+
+els.providerGroup.querySelectorAll(".provider").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (plexPolling) return;
+    if (methodOptions.includes(btn.dataset.method))
+      selectMethod(btn.dataset.method);
+  });
+});
+
+// Re-detect the available providers shortly after the user edits the URL.
+els.url.addEventListener("input", () => {
+  if (configured) return;
+  clearTimeout(detectTimer);
+  detectTimer = setTimeout(() => detectProviders(), 700);
+});
+
+els.threshold.addEventListener("input", async () => {
+  const value = parseInt(els.threshold.value, 10);
+  els.thresholdValue.value = value + " %";
+  if (els.stepsThreshold) els.stepsThreshold.textContent = value;
+  await updateStepText(value);
+});
+els.threshold.addEventListener("change", saveBehaviour);
+els.enabled.addEventListener("change", saveBehaviour);
+
+els.language.addEventListener("change", async () => {
+  await browser.runtime.sendMessage({
+    type: "watcharr:saveSettings",
+    settings: { language: els.language.value },
+  });
+  // Explicit user choice -> persist the mirror as well.
+  await applyLanguage(els.language.value, true);
+  showGeneralBanner("success", await t("settings.languageSaved"));
+});
+
+els.password.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") login();
+});
+
+load();

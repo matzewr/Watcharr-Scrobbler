@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="page.settingsTitle">Watcharr Scrobbler – Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <img
+          class="logo"
+          src="../icons/icon-96.png"
+          alt="Watcharr Scrobbler Logo"
+        />
+        <div>
+          <h1 data-i18n="page.title">Watcharr Scrobbler</h1>
+          <p class="subtitle" data-i18n="page.subtitle">
+            Scrobble Netflix → Watcharr
+          </p>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2 data-i18n="settings.connection">Watcharr connection</h2>
+        <div id="status-banner" class="banner hidden"></div>
+
+        <div class="field">
+          <label for="watcharrUrl" data-i18n="settings.url">Watcharr URL</label>
+          <input
+            type="url"
+            id="watcharrUrl"
+            placeholder="https://watcharr.example.com"
+            autocomplete="url"
+            spellcheck="false"
+          />
+          <p class="hint" data-i18n="settings.urlHint">
+            The base URL of your self-hosted Watcharr instance (without /api).
+          </p>
+        </div>
+
+        <!-- Login method. Only the providers your Watcharr instance has
+             enabled (GET /api/auth/available) are shown. -->
+        <div id="methodField" class="field">
+          <span class="field-title" data-i18n="settings.loginMethod"
+            >Login method</span
+          >
+          <div
+            id="providerGroup"
+            class="provider-group"
+            role="radiogroup"
+            aria-label="Login method"
+          >
+            <button
+              type="button"
+              class="provider active"
+              data-method="watcharr"
+              data-i18n="settings.providerWatcharr"
+            >
+              Watcharr
+            </button>
+            <button
+              type="button"
+              class="provider hidden"
+              data-method="jellyfin"
+              data-i18n="settings.providerJellyfin"
+            >
+              Jellyfin
+            </button>
+            <button
+              type="button"
+              class="provider hidden"
+              data-method="plex"
+              data-i18n="settings.providerPlex"
+            >
+              Plex
+            </button>
+          </div>
+          <p id="methodHint" class="hint hidden"></p>
+        </div>
+
+        <div id="usernameField" class="field">
+          <label for="username" data-i18n="settings.username">Username</label>
+          <input
+            type="text"
+            id="username"
+            data-i18n-placeholder="settings.usernamePlaceholder"
+            placeholder="Your username"
+            autocomplete="username"
+          />
+        </div>
+
+        <div id="passwordField" class="field">
+          <label for="password" data-i18n="settings.password">Password</label>
+          <input
+            type="password"
+            id="password"
+            data-i18n-placeholder="settings.passwordPlaceholder"
+            placeholder="Only for login – not stored"
+            autocomplete="current-password"
+          />
+          <p class="hint" data-i18n="settings.passwordHint">
+            The password is sent only once to log in to Watcharr. Only the
+            returned token is stored.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button
+            id="loginBtn"
+            class="primary"
+            data-i18n="settings.saveConnect"
+          >
+            Save &amp; connect
+          </button>
+          <button
+            id="logoutBtn"
+            class="ghost hidden"
+            data-i18n="settings.logout"
+          >
+            Log out
+          </button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="settings.general">General</h2>
+        <div id="general-banner" class="banner hidden"></div>
+
+        <div class="field">
+          <label for="language" data-i18n="settings.languageLabel"
+            >Language</label
+          >
+          <select id="language" aria-label="Language">
+            <!-- Options are populated from i18n/locale.js (SUPPORTED_LOCALES + LANGUAGE_NAMES) -->
+          </select>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="settings.scrobbling">Scrobbling</h2>
+
+        <div class="toggle-row">
+          <div>
+            <strong data-i18n="settings.scrobblingEnabled"
+              >Scrobbling enabled</strong
+            >
+            <p class="hint" data-i18n="settings.scrobblingHint">
+              Automatically add movies/shows from Netflix to Watcharr.
+            </p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="enabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label for="threshold" data-i18n="settings.threshold"
+            >Mark as watched from … % progress</label
+          >
+          <div class="range-row">
+            <input
+              type="range"
+              id="threshold"
+              min="50"
+              max="95"
+              step="5"
+              value="90"
+            />
+            <output id="thresholdValue">90 %</output>
+          </div>
+          <p class="hint" data-i18n="settings.thresholdHint">
+            When a movie or episode reaches this progress, it is marked as
+            watched (FINISHED) in Watcharr.
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="settings.history">Netflix history</h2>
+        <p class="hint" data-i18n="settings.historyHint">
+          Opens the history page with Netflix ↔ Watcharr comparison, match
+          correction, and selective import.
+        </p>
+        <div class="actions">
+          <button id="historyBtn" class="ghost" data-i18n="settings.historyBtn">
+            Open history page
+          </button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="settings.howItWorks">How it works</h2>
+        <ol class="steps">
+          <li data-i18n="settings.step1">
+            Open Netflix and start a movie or series.
+          </li>
+          <li data-i18n="settings.step2">
+            The add-on detects the title, season, and episode from Netflix'
+            metadata API.
+          </li>
+          <li data-i18n-html="settings.step3">
+            It searches for the title via your Watcharr instance (TMDB ID) and
+            adds it to your watchlist (<em>WATCHING</em>).
+          </li>
+          <li id="stepsText">
+            Once a movie/episode has been watched to ≥
+            <span id="stepsThreshold">90</span>% it is marked as watched
+            (<em>FINISHED</em>).
+          </li>
+        </ol>
+        <p class="hint" data-i18n="settings.behaviourHint">
+          You can adjust the behavior at any time via the popup or this page.
+        </p>
+      </section>
+
+      <footer>
+        <p data-i18n="settings.footer">
+          Data processing happens locally and only with your own Watcharr
+          instance. No data is transferred to third parties.
+        </p>
+      </footer>
+    </main>
+
+    <script src="../i18n/locale.js"></script>
+    <script src="../i18n/formatters.js"></script>
+    <script src="../i18n/index.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

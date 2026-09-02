@@ -1,0 +1,19 @@
+{
+  "name": "watcharr-scrobbler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser extension (Firefox + Chrome) that automatically scrobbles Netflix playback into your self-hosted Watcharr instance.",
+  "scripts": {
+    "icons": "python3 tools/generate_icons.py",
+    "format": "prettier --write .",
+    "lint": "web-ext lint --source-dir .",
+    "run": "web-ext run --source-dir .",
+    "build": "node tools/build.mjs",
+    "build:firefox": "node tools/build.mjs --target firefox",
+    "build:chrome": "node tools/build.mjs --target chrome"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "web-ext": "^8.0.0"
+  }
+}
