@@ -343,8 +343,17 @@ async function startPlexLogin() {
     if (!popup) throw new Error(await t("settings.plexPopupBlocked"));
 
     plexPopup = popup;
-    popup.location.href = resp.authUrl;
-    popup.focus();
+    try {
+      // Navigating to plex.tv destroys the `window.open` reference in Firefox
+      // (it becomes a "dead object"), so no popup property may be accessed
+      // after this point. The background pin poll is the source of truth, not
+      // the popup window.
+      popup.location.href = resp.authUrl;
+      popup.focus();
+    } catch (_) {
+      // Popup already gone (e.g. closed while the pin was being created) –
+      // keep polling; the timeout below will end the flow.
+    }
     plexPolling = true;
     pollPlex();
   } catch (err) {
@@ -358,6 +367,16 @@ async function startPlexLogin() {
       await t("settings.loginFailed", { error: err.message }),
     );
   }
+}
+
+// The plex.tv popup is only ever *written* to, never read back: as soon as it
+// navigates to app.plex.tv, Firefox drops the `window.open` reference into a
+// "dead object" where even reading `popup.closed` throws. Closing is therefore
+// best-effort only (and may silently fail once the reference is dead).
+function closePlexPopup() {
+  try {
+    if (plexPopup) plexPopup.close();
+  } catch (_) {}
 }
 
 async function pollPlex() {
@@ -382,23 +401,22 @@ async function pollPlex() {
     return;
   }
   if (resp && resp.ok === false && /no active/i.test(resp.error || "")) {
+    // Nothing left to wait for – the flow was consumed or reset.
     stopPlexPolling();
     showBanner("info", await t("settings.plexTimeout"));
     return;
   }
-  if (plexPopup && plexPopup.closed) {
-    stopPlexPolling();
-    showBanner("info", await t("settings.plexClosed"));
-    return;
-  }
+  // Deliberately do NOT stop when the popup looks closed/unreachable:
+  // app.plex.tv closes its window right after the user approves the login, and
+  // in Firefox the popup reference dies as soon as it navigates there. Both
+  // look like a "closed popup" but are signs the flow is progressing. Only the
+  // background pin poll (authToken above) or the timeout below end it.
   setTimeout(pollPlex, 1500);
 }
 
 function stopPlexPolling() {
   plexPolling = false;
-  try {
-    if (plexPopup) plexPopup.close();
-  } catch (_) {}
+  closePlexPopup();
   plexPopup = null;
   setLoginBusy(false);
   updateLoginView();
@@ -406,9 +424,7 @@ function stopPlexPolling() {
 
 async function finishPlexLogin(authToken) {
   plexPolling = false;
-  try {
-    if (plexPopup) plexPopup.close();
-  } catch (_) {}
+  closePlexPopup();
   plexPopup = null;
   const url = els.url.value.trim();
   try {
@@ -448,9 +464,7 @@ async function logout() {
   await browser.runtime.sendMessage({ type: "watcharr:logout" });
   if (plexPolling) {
     plexPolling = false;
-    try {
-      if (plexPopup) plexPopup.close();
-    } catch (_) {}
+    closePlexPopup();
     plexPopup = null;
   }
   els.username.value = "";
