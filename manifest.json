@@ -31,6 +31,12 @@
       "run_at": "document_start"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/netflix/netflix-probe.js"],
+      "matches": ["*://*.netflix.com/*"]
+    }
+  ],
   "options_ui": {
     "page": "options/options.html",
     "open_in_tab": true
