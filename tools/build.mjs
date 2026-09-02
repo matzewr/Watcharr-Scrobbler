@@ -8,6 +8,10 @@
  *                      * `browser.*` polyfill (lib/browser-polyfill.min.js) is
  *                        added to every context that uses it
  *                      * browser_specific_settings is removed
+ *   <name>-firefox-<version>.xpi – installable Firefox package at the root
+ *                                  (built from dist/firefox)
+ *   <name>-chrome-<version>.zip  – Chrome Web Store package at the root (built
+ *                                  from dist/chrome)
  *
  * Usage:  node tools/build.mjs   (or: npm run build)
  *
@@ -29,6 +33,18 @@ import { dirname, join } from "node:path";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const distDir = join(root, "dist");
 
+// Per-browser package names at the project root, derived once from the source
+// manifest (e.g. watcharr-scrobbler-firefox-1.1.xpi). An .xpi is a ZIP
+// container: Firefox installs it directly on double-click / drag & drop.
+// The Chrome Web Store upload form only accepts a plain .zip file.
+const rootManifest = JSON.parse(
+  readFileSync(join(root, "manifest.json"), "utf8"),
+);
+const addonId = rootManifest.browser_specific_settings?.gecko?.id?.split("@")[0];
+const baseName = addonId || "watcharr-scrobbler";
+const FIREFOX_XPI = `${baseName}-firefox-${rootManifest.version}.xpi`;
+const CHROME_ZIP = `${baseName}-chrome-${rootManifest.version}.zip`;
+
 // Files/folders that are never part of a store package.
 const COMMON_EXCLUDE = new Set([
   ".git",
@@ -42,6 +58,8 @@ const COMMON_EXCLUDE = new Set([
   "package.json",
   "package-lock.json",
   "README.md",
+  FIREFOX_XPI, // root packages – never inside a store package
+  CHROME_ZIP,
 ]);
 
 // Chrome-only artifacts that must NOT end up in the Firefox package.
@@ -260,9 +278,10 @@ function buildZip(entries) {
   return Buffer.concat([...chunks, centralBuf, eocd]);
 }
 
-// Packages the contents of `dir` into `<distDir>/<zipName>` and returns the path.
-function writeZip(dir, zipName) {
-  const out = join(distDir, zipName);
+// Packages the contents of `dir` into `<outDir>/<fileName>` (ZIP container) and
+// returns the resulting path. Used to place the installable .xpi at the root.
+function writePackage(dir, outDir, fileName) {
+  const out = join(outDir, fileName);
   writeFileSync(out, buildZip(collectZipFiles(dir)));
   return out;
 }
@@ -274,25 +293,37 @@ const targetArg = process.argv.indexOf("--target");
 const target = targetArg >= 0 ? process.argv[targetArg + 1] || "all" : "all";
 
 const results = [];
-let firefoxZip = null;
+let firefoxXpi = null;
+let chromeZip = null;
 if (target === "firefox" || target === "all") {
   const out = buildFirefox();
   results.push(["Firefox", out]);
-  // Ready-to-submit AMO package: the dist/firefox content as a zip.
-  const version = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"))
-    .version;
-  firefoxZip = writeZip(out, `firefox-${version}.zip`);
+  // Installable .xpi at the project root – its content equals dist/firefox.
+  // Firefox installs it on double-click / drag & drop; addons.mozilla.org
+  // accepts the .xpi for submission as well.
+  firefoxXpi = writePackage(out, root, FIREFOX_XPI);
 }
 if (target === "chrome" || target === "all") {
-  results.push(["Chrome", buildChrome()]);
+  const out = buildChrome();
+  results.push(["Chrome", out]);
+  // Ready-to-upload Chrome Web Store package at the project root – its content
+  // equals dist/chrome. The store only accepts a .zip file.
+  chromeZip = writePackage(out, root, CHROME_ZIP);
 }
 
 console.log("Build finished:");
 for (const [name, dir] of results) {
   console.log(`  ${name}: ${dir}`);
 }
-if (firefoxZip) {
-  console.log(`  Firefox-ZIP (fertig für AMO): ${firefoxZip}`);
+if (firefoxXpi) {
+  console.log(
+    `  Firefox-XPI (in Firefox ziehen = installieren): ${firefoxXpi}`,
+  );
+}
+if (chromeZip) {
+  console.log(
+    `  Chrome-ZIP (direkt im Chrome Web Store hochladen): ${chromeZip}`,
+  );
 }
 if (target === "chrome" || target === "all") {
   console.log(
@@ -300,5 +331,7 @@ if (target === "chrome" || target === "all") {
   );
 }
 if (target === "firefox" || target === "all") {
-  console.log("  → Firefox-ZIP direkt bei addons.mozilla.org einreichen.");
+  console.log(
+    "  → Firefox-XPI in Firefox ziehen (temporär installieren) oder bei addons.mozilla.org einreichen.",
+  );
 }
