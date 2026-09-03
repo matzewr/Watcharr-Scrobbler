@@ -454,6 +454,21 @@
     return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
   }
 
+  // Gentle pacing for the history crawl: ONE delay before every history page
+  // (a page = HISTORY_PAGE_SIZE = 20 entries). That keeps e.g. the "oldest
+  // first" full load from crawling through hundreds of pages at full speed,
+  // but does NOT slow down the incremental (infinite scroll) mode – pages
+  // there are triggered by scrolling and are already human-paced. The
+  // metadata lookups WITHIN a page run without an extra delay.
+  const HISTORY_PAGE_GAP_MS = 500;
+  let lastHistoryPageAt = 0;
+  async function historyThrottle() {
+    const now = Date.now();
+    const wait = lastHistoryPageAt + HISTORY_PAGE_GAP_MS - now;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastHistoryPageAt = Date.now();
+  }
+
   /**
    * Netflix session from the injected probe (authURL, userGuid,
    * BUILD_IDENTIFIER). Fallback: parse /settings/viewed/ HTML.
@@ -500,6 +515,7 @@
     let lastErr;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        await historyThrottle(); // one delay per history page (20 entries)
         const resp = await fetch(url, {
           method: "POST",
           headers,
