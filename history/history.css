@@ -85,6 +85,12 @@ body {
   background: var(--bg-elev-2);
 }
 
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Status */
 .status {
   margin: 14px 20px 0;
@@ -227,6 +233,13 @@ button.ghost {
 
 button.ghost:hover:not(:disabled) {
   background: var(--bg-elev-2);
+}
+
+/* Sort-order toggle – highlighted while "Oldest first" is active. */
+button.ghost.active {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  background: rgba(255, 77, 90, 0.12);
 }
 
 button.primary {
@@ -568,4 +581,52 @@ button:disabled {
 
 .result td .st.skipped {
   color: var(--yellow);
+}
+
+/* Confirmation modal (e.g. switching the display order to "oldest first"). */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: 100%;
+  max-width: 460px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.modal .modal-text {
+  margin: 0 0 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Abort button shown below the loading hint (e.g. "oldest first" full load). */
+.list-action {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 40px;
 }

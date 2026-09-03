@@ -256,12 +256,14 @@ async function handleMessage(msg, sender) {
     // -- History page (Comparison Netflix ↔ Watcharr) ---------------
     case "watcharr:history:load":
       try {
+        WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.load();
         return {
           ok: true,
           items: data.items,
           total: data.total,
           done: data.done,
+          cancelled: !!data.cancelled,
         };
       } catch (err) {
         return { ok: false, error: err.message || String(err) };
@@ -269,6 +271,7 @@ async function handleMessage(msg, sender) {
 
     case "watcharr:history:more":
       try {
+        WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.more();
         return {
           ok: true,
@@ -296,6 +299,15 @@ async function handleMessage(msg, sender) {
       } catch (err) {
         return { ok: false, error: err.message || String(err) };
       }
+
+    case "watcharr:history:cancel":
+      // Abort a running "oldest first" full-history load.
+      WatcharrHistory.cancelHistoryLoad();
+      return { ok: true };
+
+    case "watcharr:history:progress":
+      // Entries fetched so far while the "oldest first" full load is running.
+      return { ok: true, loaded: WatcharrHistory.getLoadProgress() };
 
     default:
       return { ok: false, error: "Unknown message type: " + (msg && msg.type) };

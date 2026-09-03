@@ -17,6 +17,9 @@ const WatcharrHistory = (() => {
   // entry (NO grouping by series). BATCH_SIZE elements are always fetched
   // from Netflix, matched, and then displayed on the page.
   const BATCH_SIZE = 20;
+  // Safety cap for "oldest first" mode: Netflix normally ends with an empty
+  // page much earlier – this only guards against an endless loop.
+  const MAX_HISTORY_PAGES = 500;
 
   let items = []; // all entries loaded so far (1 Netflix view = 1 row)
   const itemMap = new Map(); // lookup for fast item.key -> item; important for larger histories
@@ -26,6 +29,17 @@ const WatcharrHistory = (() => {
   let loading = false; // currently loading a batch?
   let loadError = null; // last error when loading
   let seq = 0; // sequential key for stable item keys
+  // Session display order: show the history OLDEST first? Netflix returns the
+  // newest entry first (page 0 = top of the list), so this mode loads the
+  // COMPLETE history once and serves it to the UI starting with the oldest
+  // entry (oldest at the very top).
+  let oldestFirst = false;
+  // oldest-first mode: how many entries have already been handed to the UI.
+  // After the full load `items` is stored oldest -> newest.
+  let delivered = 0;
+  // Set while a (long) "oldest first" full-history load is running so that
+  // the user can abort it via the button on the history page.
+  let cancelRequested = false;
 
   function refreshItemMap() {
     itemMap.clear();
@@ -40,6 +54,16 @@ const WatcharrHistory = (() => {
   async function getSettings() {
     const d = await browser.storage.local.get("settings");
     return d.settings || {};
+  }
+
+  /** Sets the display order for the next load / more (session-only). */
+  function setOldestFirst(v) {
+    oldestFirst = !!v;
+  }
+
+  /** Requests that a running "oldest first" full-history load be aborted. */
+  function cancelHistoryLoad() {
+    cancelRequested = true;
   }
 
   /**
@@ -321,11 +345,20 @@ const WatcharrHistory = (() => {
     loading = false;
     loadError = null;
     seq = 0;
+    delivered = 0;
+    cancelRequested = false;
     watchedEpisodesCache.clear();
 
-    const res = await fetchMore(BATCH_SIZE);
+    const res = oldestFirst
+      ? await loadEntireHistory()
+      : await fetchMore(BATCH_SIZE);
     log("load: first page loaded, total", res.total, "done", res.done);
-    return { items: res.items, total: res.total, done: res.done };
+    return {
+      items: res.items,
+      total: res.total,
+      done: res.done,
+      cancelled: !!res.cancelled,
+    };
   }
 
   /** Loads the next BATCH from Netflix, resolves the matches, returns it. */
@@ -355,9 +388,101 @@ const WatcharrHistory = (() => {
     }
   }
 
+  /**
+   * Oldest-first mode: loads the COMPLETE Netflix history (every page), then
+   * hands it to the UI starting with the oldest entry. Netflix metadata
+   * enrichment happens per page in the Content Script; the Watcharr match
+   * lookup is done lazily per delivered chunk (same amount of requests as in
+   * the normal incremental mode – just when the rows are actually shown).
+   */
+  async function loadEntireHistory() {
+    if (loading) return { items: [], total, done };
+    loading = true;
+    loadError = null;
+    try {
+      log("loadEntireHistory: loading complete Netflix history …");
+      let pages = 0;
+      while (!done && pages < MAX_HISTORY_PAGES && !cancelRequested) {
+        const { entries, done: d } = await netflixPage(page);
+        if (cancelRequested) break; // user aborted while the page was fetched
+        if (d || !entries.length) {
+          done = true;
+          break;
+        }
+        for (const entry of entries) {
+          const it = entryToItem(entry);
+          items.push(it);
+          itemMap.set(it.key, it);
+        }
+        page++;
+        pages++;
+      }
+      if (cancelRequested) {
+        log("loadEntireHistory: aborted by user");
+        return { cancelled: true, items: [], total, done: false };
+      }
+      // Netflix page 0 = newest entry, so `items` is newest -> oldest right
+      // now. Flip it: items[0] = OLDEST entry -> the UI gets oldest first.
+      items.reverse();
+      total = items.length;
+      log(
+        "loadEntireHistory: complete history loaded (",
+        total,
+        "entries), serving oldest first",
+      );
+      return await deliverBatch();
+    } finally {
+      loading = false;
+    }
+  }
+
+  /** Oldest-first: returns the next chunk of the loaded history (oldest first). */
+  async function deliverBatch() {
+    const chunk = items.slice(delivered, delivered + BATCH_SIZE);
+    delivered += chunk.length;
+    log(
+      "deliverBatch: delivering",
+      chunk.length,
+      "entries (delivered",
+      delivered,
+      "/",
+      total,
+      ")",
+    );
+    await Promise.all(chunk.map((it) => resolveItem(it)));
+    return {
+      items: chunk.map(serializeItem),
+      total,
+      done: delivered >= items.length,
+    };
+  }
+
+  /** Number of Netflix entries fetched so far (for the load-progress display). */
+  function getLoadProgress() {
+    return items.length;
+  }
+
   /** For the history page: load next batch (inline errors instead of throw). */
   async function more() {
     try {
+      if (oldestFirst) {
+        if (loading)
+          return {
+            items: [],
+            total,
+            done: delivered >= items.length,
+            error: loadError,
+          };
+        if (delivered >= items.length)
+          return { items: [], total, done: true, error: loadError };
+        const res = await deliverBatch();
+        return {
+          items: res.items,
+          total: res.total,
+          done: res.done,
+          error: loadError,
+        };
+      }
       const res = await fetchMore(BATCH_SIZE);
       return {
         items: res.items,
@@ -517,23 +642,67 @@ const WatcharrHistory = (() => {
     }
   }
 
-  /** Imports the selected titles into Watcharr. */
+  /**
+   * Imports the selected titles into Watcharr.
+   *
+   * The selected entries are always sent to Watcharr ordered by their watch
+   * date in ASCENDING order (oldest first) – INDEPENDENT of the order in
+   * which the keys arrive and of the current display order (works the same
+   * for "newest first" and "oldest first" views). That way a series that is
+   * imported in this run is created in Watcharr with its oldest (original)
+   * watch date. Entries without a usable date are sent last.
+   */
   async function importItems(keys) {
     const s = await getSettings();
     if (!s.watcharrUrl || !s.token)
       throw new Error("Watcharr is not configured.");
     const c = new WatcharrClient(s);
     const results = [];
+
+    // Resolve the selected items and sort them oldest -> newest.
+    // Items without a usable date are sent last (order between them stays
+    // as passed in).
+    const ordered = [];
     for (const key of keys) {
       const it = itemMap.get(key) || items.find((x) => x.key === key);
       if (!it) continue;
       if (it.key && !itemMap.has(it.key)) itemMap.set(it.key, it);
+      ordered.push(it);
+    }
+    ordered.sort((a, b) => {
+      const da = a.date ? new Date(a.date).getTime() : Infinity;
+      const db = b.date ? new Date(b.date).getTime() : Infinity;
+      return da - db;
+    });
+
+    // When several episodes of a series that does NOT exist in Watcharr yet
+    // are imported in one run, only the first one may create the series
+    // (POST /import). Every further episode of the SAME series must reuse the
+    // newly created watched ID – otherwise /import answers "IMPORT_EXISTS" and
+    // the episode would be skipped although it was never marked as watched.
+    const createdSeries = new Map(); // tmdbId -> watchedId (created in this run)
+
+    for (const it of ordered) {
+      // Episode of a series that was just created above -> mark the specific
+      // episode on the existing watched entry (addWatchedEpisode) instead of
+      // trying to import the series a second time.
+      if (
+        it.isTv &&
+        it.match &&
+        !it.match.watchedId &&
+        createdSeries.has(it.match.tmdbId)
+      ) {
+        it.match.watchedId = createdSeries.get(it.match.tmdbId);
+      }
       const r = await importOne(c, it);
       it.status = r.status;
       it.error = r.error || null;
-      if (r.watchedId && it.match) it.match.watchedId = r.watchedId;
+      if (r.watchedId && it.match) {
+        it.match.watchedId = r.watchedId;
+        if (it.isTv) createdSeries.set(it.match.tmdbId, r.watchedId);
+      }
       results.push({
-        key,
+        key: it.key,
         title: it.title,
         status: r.status,
         error: r.error,
@@ -544,5 +713,14 @@ const WatcharrHistory = (() => {
     return results;
   }
 
-  return { load, more, getItems, rematch, importItems };
+  return {
+    load,
+    more,
+    getItems,
+    rematch,
+    importItems,
+    setOldestFirst,
+    cancelHistoryLoad,
+    getLoadProgress,
+  };
 })();

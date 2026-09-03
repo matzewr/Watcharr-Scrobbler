@@ -43,6 +43,10 @@ const els = {
   selectNoneBtn: $("#selectNoneBtn"),
   filterBox: $("#filterBox"),
   importBtn: $("#importBtn"),
+  orderBtn: $("#orderBtn"),
+  confirmModal: $("#confirmModal"),
+  orderOkBtn: $("#orderOkBtn"),
+  orderCancelBtn: $("#orderCancelBtn"),
   list: $("#list"),
 };
 
@@ -55,6 +59,15 @@ const PREFETCH_THRESHOLD = 5; // reload when only this many rows are left at bot
 let total = 0; // number of titles loaded so far
 let allLoaded = false; // complete Netflix history loaded?
 let loadingMore = false; // currently loading more?
+// Lock while an initial full load is running (e.g. switching to "oldest
+// first"): blocks infinite scroll / parallel loads until it has finished.
+let loadingInitial = false;
+// Generation counter: incremented on every fresh load() so that a still
+// pending "load more" response from an older list can be discarded.
+let loadGen = 0;
+// Session-only display order: false = newest first (default, incremental),
+// true = oldest first (the complete history is loaded once, oldest on top).
+let oldestFirst = false;
 
 function escapeHtml(s) {
   return String(s == null ? "" : s)
@@ -409,17 +422,78 @@ function updateImportButton() {
   els.importBtn.textContent = ts("history.importSelected", { count: n });
 }
 
+/** Updates the sort-order toggle in the toolbar (label = current order). */
+function updateOrderBtn() {
+  els.orderBtn.textContent = ts(
+    oldestFirst ? "history.oldestFirst" : "history.newestFirst",
+  );
+  els.orderBtn.classList.toggle("active", oldestFirst);
+  els.orderBtn.title = ts("history.switchOrder", {
+    mode: ts(oldestFirst ? "history.newestFirst" : "history.oldestFirst"),
+  });
+}
+
+/** Clears the currently shown history so a stale list doesn't linger while a
+ * new load runs. Shows `loadingText` as the only list hint; when `showCancel`
+ * is set, a button is added to abort the running (long) load. */
+function clearList(loadingText, showCancel) {
+  items = [];
+  allItems = [];
+  scrollTriggers = [];
+  els.list.innerHTML = "";
+  hintEl = null;
+  const cancel = showCancel
+    ? '<div class="list-action">' +
+      '<button type="button" class="ghost cancel-load-btn">' +
+      escapeHtml(ts("history.cancelLoad")) +
+      "</button></div>"
+    : "";
+  replaceFromHtml(
+    els.list,
+    '<div class="list-hint">' +
+      escapeHtml(loadingText || "") +
+      "</div>" +
+      cancel,
+  );
+  hintEl = els.list.firstChild;
+  updateImportButton();
+}
+
 async function load() {
+  if (loadingInitial) return; // a load is already in progress
+  loadingInitial = true; // lock infinite scroll until this load finishes
+  const gen = ++loadGen; // supersede any in-flight "load more" / older loads
   clearStatus();
-  setStatus("info", await t("history.loadingHistory"));
+  updateOrderBtn();
+  const loadingMsg = await t(
+    oldestFirst ? "history.loadingHistoryOldest" : "history.loadingHistory",
+  );
+  setStatus("info", loadingMsg);
+  // Remove the previously displayed history; for the long "oldest first"
+  // load offer a button to abort it and show the fetch progress.
+  clearList(loadingMsg, oldestFirst);
+  if (oldestFirst) startProgressPolling();
+  let ok = false;
   try {
     const resp = await browser.runtime.sendMessage({
       type: "watcharr:history:load",
+      oldestFirst,
     });
+    if (gen !== loadGen) return; // superseded – a newer load owns the state
+    if (resp && resp.cancelled) {
+      // User aborted the "oldest first" full load -> fall back to the
+      // default (newest first) order and load normally again.
+      oldestFirst = false;
+      updateOrderBtn();
+      loadingInitial = false; // release the lock so the reload can start
+      load();
+      return;
+    }
     if (!resp || !resp.ok)
       throw new Error(
         (resp && resp.error) || (await t("history.loadingFailed")),
       );
+    ok = true;
     allItems = resp.items || [];
     total = resp.total != null ? resp.total : allItems.length;
     allLoaded = !!resp.done;
@@ -435,29 +509,40 @@ async function load() {
     } else {
       setStatus("info", await t("history.titlesLoaded", { total }));
     }
-    maybeLoadMore();
   } catch (err) {
-    setStatus("error", err.message);
-    replaceFromHtml(
-      els.list,
-      '<div class="list-hint">' + escapeHtml(err.message) + "</div>",
-    );
+    if (gen === loadGen) {
+      setStatus("error", err.message);
+      replaceFromHtml(
+        els.list,
+        '<div class="list-hint">' + escapeHtml(err.message) + "</div>",
+      );
+    }
+  } finally {
+    // Only the most recent load may release the lock / auto-fill.
+    if (gen === loadGen) {
+      stopProgressPolling();
+      loadingInitial = false; // unlock infinite scroll again
+      if (ok) maybeLoadMore();
+    }
   }
 }
 
 /** Loads the next part of history (infinite scroll, 20-step increments). */
 async function loadMore() {
-  if (loadingMore || allLoaded) return;
+  if (loadingMore || allLoaded || loadingInitial) return;
   loadingMore = true;
+  const gen = loadGen;
   updateHint();
   try {
     const resp = await browser.runtime.sendMessage({
       type: "watcharr:history:more",
+      oldestFirst,
     });
     if (!resp || !resp.ok)
       throw new Error(
         (resp && resp.error) || (await t("history.loadingFailed")),
       );
+    if (gen !== loadGen) return; // a fresh load replaced this list – discard
     const newItems = resp.items || [];
     allItems.push(...newItems);
     if (resp.total != null) total = resp.total;
@@ -473,22 +558,126 @@ async function loadMore() {
       setStatus("info", await t("history.titlesLoaded", { total }));
     }
   } catch (err) {
-    setStatus("error", err.message);
+    if (gen === loadGen) setStatus("error", err.message);
   } finally {
     loadingMore = false;
-    updateHint();
-    maybeLoadMore();
+    // If a fresh load replaced this list, don't touch its UI state/hint.
+    if (gen === loadGen) {
+      updateHint();
+      maybeLoadMore();
+    }
   }
 }
 
 /** Fills the visible area if there's still space (without scrolling). */
 function maybeLoadMore() {
-  if (loadingMore || allLoaded) return;
+  if (loadingMore || allLoaded || loadingInitial) return;
   const doc = document.documentElement;
   if (doc.scrollHeight <= window.innerHeight + 200) {
     loadMore();
   }
 }
+
+// -- Load progress ("oldest first" full load) ------------------------------
+// While the complete history is being fetched, the page polls the background
+// once per second and shows how many entries have been fetched by then
+// (e.g. "Already 340 entries loaded").
+let progressTimer = null;
+const PROGRESS_POLL_MS = 1000;
+
+function stopProgressPolling() {
+  if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+}
+
+function startProgressPolling() {
+  stopProgressPolling();
+  progressTimer = setInterval(async () => {
+    if (!loadingInitial || !oldestFirst) {
+      stopProgressPolling();
+      return;
+    }
+    try {
+      const resp = await browser.runtime.sendMessage({
+        type: "watcharr:history:progress",
+      });
+      if (resp && resp.ok && typeof resp.loaded === "number") {
+        updateLoadingProgress(resp.loaded);
+      }
+    } catch (_) {
+      /* transient – next tick retries */
+    }
+  }, PROGRESS_POLL_MS);
+}
+
+/** Shows how many entries have been fetched so far on the loading hint. */
+function updateLoadingProgress(loaded) {
+  if (!loaded) return; // keep the generic loading message until the first page
+  const h = els.list.querySelector(".list-hint");
+  if (h) h.textContent = ts("history.loadedSoFar", { count: loaded });
+}
+
+// -- Cancel a running ("oldest first") load ------------------------------
+// Aborts the long full-history load in the background. The still-pending
+// load() response then arrives with `cancelled: true` and automatically
+// falls back to the default (newest first) order.
+async function cancelLoad() {
+  if (!loadingInitial || !oldestFirst) return;
+  const btn = els.list.querySelector(".cancel-load-btn");
+  if (btn) btn.disabled = true; // avoid duplicate clicks
+  try {
+    await browser.runtime.sendMessage({ type: "watcharr:history:cancel" });
+  } catch (_) {
+    /* ignore – the running load may already have finished */
+  }
+}
+
+// Cancel button inside the loading placeholder (event delegation).
+els.list.addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest(".cancel-load-btn");
+  if (btn) cancelLoad();
+});
+
+// -- Sort order (oldest first / newest first) --------------------------------
+// Switching to "oldest first" loads the complete history once -> ask first.
+function openOrderConfirm() {
+  els.confirmModal.classList.remove("hidden");
+  els.orderOkBtn.focus();
+}
+
+function closeOrderConfirm() {
+  els.confirmModal.classList.add("hidden");
+}
+
+els.orderBtn.addEventListener("click", () => {
+  if (loadingInitial) return; // ignore while a full load is running
+  if (!oldestFirst) {
+    openOrderConfirm(); // switching to oldest first needs confirmation
+  } else {
+    oldestFirst = false; // back to newest first is instant – no confirmation
+    load();
+  }
+});
+
+els.orderOkBtn.addEventListener("click", () => {
+  closeOrderConfirm();
+  oldestFirst = true;
+  load(); // reloads the list in the new order (label/state is updated in load)
+});
+
+els.orderCancelBtn.addEventListener("click", closeOrderConfirm);
+
+// Click on the backdrop closes the dialog; Esc works as well.
+els.confirmModal.addEventListener("click", (e) => {
+  if (e.target === els.confirmModal) closeOrderConfirm();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !els.confirmModal.classList.contains("hidden")) {
+    closeOrderConfirm();
+  }
+});
 
 // -- Selection / Filter ---------------------------------------------------------
 els.selectAllBtn.addEventListener("click", () => {
@@ -587,7 +776,9 @@ els.list.addEventListener("click", async (e) => {
             '<div class="meta">' +
             escapeHtml(
               (r.type || "").replace("tmdb_", "") +
-                (r.releaseDate ? " · " + String(r.releaseDate).slice(0, 4) : ""),
+                (r.releaseDate
+                  ? " · " + String(r.releaseDate).slice(0, 4)
+                  : ""),
             ) +
             "</div></div>",
         );
@@ -732,7 +923,7 @@ els.reloadBtn.addEventListener("click", load);
 // Infinite Scroll: load more as soon as only PREFETCH_THRESHOLD rows are
 // left until the bottom of the viewport.
 window.addEventListener("scroll", () => {
-  if (loadingMore || allLoaded) return;
+  if (loadingMore || allLoaded || loadingInitial) return;
   if (!scrollTriggers.length) return;
   const rect = scrollTriggers[0].getBoundingClientRect();
   if (rect.top <= window.innerHeight) {
@@ -745,6 +936,7 @@ async function initHistory() {
     ? await window.watcharrI18nLocale.fetchLocale()
     : "en";
   await applyLanguage(locale);
+  updateOrderBtn();
   load();
 }
 
