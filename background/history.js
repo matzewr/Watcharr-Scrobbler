@@ -546,9 +546,9 @@ const WatcharrHistory = (() => {
 
     // ---- Series – single watched episode ----
     if (it.isTv) {
-      // Series already exists: just mark the episode. The exact date
-      // is sent as addActivityDate – Watcharr with the
-      // "addActivityDate" PR will use it; older versions ignore it.
+      // Series already exists (or was just created in this run): mark the
+      // specific episode. The exact Netflix date is always passed along
+      // (server field `watchedDate`).
       if (watchedId) {
         if (it.season != null && it.episode != null) {
           try {

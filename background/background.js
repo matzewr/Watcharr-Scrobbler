@@ -241,6 +241,7 @@ async function handleMessage(msg, sender) {
           msg.seasonNumber,
           msg.episodeNumber,
           msg.status || "FINISHED",
+          msg.watchedDate,
         ),
       );
 

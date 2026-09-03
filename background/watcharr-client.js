@@ -172,10 +172,9 @@ class WatcharrClient {
       episodeNumber: Number(episodeNumber),
       status,
     };
-    // Exact watch date (RFC3339). Watcharr with the "addActivityDate"
-    // PR will use it; older versions simply ignore this
-    // field (Gin: unknown JSON fields are discarded).
-    if (watchedDate) body.addActivityDate = watchedDate;
+    // Exact watch date (RFC3339) – the request struct expects the JSON field
+    // `watchedDate` (entity: WatchedEpisodeAddRequest).
+    if (watchedDate) body.watchedDate = watchedDate;
     return this._request("POST", "/watched/episode", body);
   }
 
