@@ -67,7 +67,7 @@ function uuid() {
 /**
  * Build a client from stored settings and run `fn`.
  * Catches errors and turns them into a friendly response so callers (content
- * script / popup) always get `{ ok, data?, error?, authRequired? }`.
+ * script / popup) always get `{ ok, data?, error?, errorCode?, authRequired? }`.
  */
 async function withClient(fn) {
   const s = await getSettings();
@@ -75,6 +75,7 @@ async function withClient(fn) {
     return {
       ok: false,
       error: "Watcharr is not configured.",
+      errorCode: "not_configured",
       authRequired: true,
     };
   }
@@ -85,9 +86,22 @@ async function withClient(fn) {
     return {
       ok: false,
       error: err.message || String(err),
+      errorCode: (err && err.userCode) || null,
+      errorParams: (err && err.userParams) || null,
       authRequired: !!err.authRequired,
     };
   }
+}
+
+/** Normalizes a thrown background Error into a message response carrying the
+ *  stable i18n code (see background/history.js / watcharr-client.js). */
+function toErrorResponse(err) {
+  return {
+    ok: false,
+    error: (err && err.message) || String(err),
+    errorCode: (err && err.userCode) || null,
+    errorParams: (err && err.userParams) || null,
+  };
 }
 
 async function handleMessage(msg, sender) {
@@ -140,7 +154,12 @@ async function handleMessage(msg, sender) {
 
     // Poll the plex.tv pin; `authToken` is set once the user approved it.
     case "watcharr:plex:poll": {
-      if (!plexFlow) return { ok: false, error: "No active Plex login flow." };
+      if (!plexFlow)
+        return {
+          ok: false,
+          error: "No active Plex login flow.",
+          errorCode: "no_active_plex",
+        };
       const s = await getSettings();
       const authToken = await PlexTvAuth.pollPin(
         s.plexClientId || "",
@@ -268,7 +287,7 @@ async function handleMessage(msg, sender) {
           cancelled: !!data.cancelled,
         };
       } catch (err) {
-        return { ok: false, error: err.message || String(err) };
+        return toErrorResponse(err);
       }
 
     case "watcharr:history:more":
@@ -282,9 +301,10 @@ async function handleMessage(msg, sender) {
           total: data.total,
           done: data.done,
           error: data.error || null,
+          errorCode: data.errorCode || null,
         };
       } catch (err) {
-        return { ok: false, error: err.message || String(err) };
+        return toErrorResponse(err);
       }
 
     case "watcharr:history:rematch":
@@ -292,7 +312,7 @@ async function handleMessage(msg, sender) {
         const item = await WatcharrHistory.rematch(msg.key, msg.result);
         return { ok: true, item };
       } catch (err) {
-        return { ok: false, error: err.message || String(err) };
+        return toErrorResponse(err);
       }
 
     case "watcharr:history:import":
@@ -300,7 +320,7 @@ async function handleMessage(msg, sender) {
         const results = await WatcharrHistory.importItems(msg.keys || []);
         return { ok: true, results };
       } catch (err) {
-        return { ok: false, error: err.message || String(err) };
+        return toErrorResponse(err);
       }
 
     case "watcharr:history:cancel":
@@ -344,7 +364,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     .then(sendResponse)
     .catch((err) => {
       console.error("[watcharr-scrobbler] background error:", err);
-      sendResponse({ ok: false, error: err.message || String(err) });
+      sendResponse(toErrorResponse(err));
     });
   return true; // keep the message channel open for the async response
 });

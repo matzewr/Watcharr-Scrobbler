@@ -45,15 +45,25 @@
     "providerWatcharr": "Watcharr",
     "providerJellyfin": "Jellyfin",
     "providerPlex": "Plex",
+    "providerEmby": "Emby",
     "connectJellyfin": "Connect with Jellyfin",
     "connectPlex": "Continue with Plex",
+    "connectEmby": "Connect with Emby",
     "jellyfinHint": "Log in with your Jellyfin credentials. Your Watcharr server must have the Jellyfin host configured.",
     "plexHint": "A popup will open at plex.tv where you log in and grant access. Your Watcharr server must have the Plex host configured.",
     "plexWaiting": "Waiting for Plex…",
     "plexClosed": "The Plex login window was closed.",
     "plexTimeout": "Plex login timed out – please try again.",
     "plexPopupBlocked": "Could not open the Plex popup. Please allow popups for this page.",
-    "missingUrl": "Enter your Watcharr URL first."
+    "missingUrl": "Enter your Watcharr URL first.",
+    "error": {
+      "generic": "An unknown error occurred.",
+      "connection": "Could not connect to Watcharr: {reason}",
+      "noToken": "The server returned no login token.",
+      "plexNetwork": "Could not reach plex.tv: {reason}",
+      "plexHttp": "plex.tv request failed (HTTP {status}).",
+      "plexInvalid": "plex.tv returned an invalid PIN."
+    }
   },
   "popup": {
     "nowPlaying": "Now on {service}",
@@ -148,7 +158,18 @@
     "badgeReaddTitle": "Already finished in Watcharr, but not for this date – importing adds this watch date.",
     "metadataMovie": "Movie",
     "metadataSeries": "Series",
+    "metadataPerson": "Person",
     "metadataOn": "on {date}",
-    "noMatchFilter": "No entries for the filter \"{filter}\"."
+    "noMatchFilter": "No entries for the filter \"{filter}\".",
+    "error": {
+      "generic": "An error occurred: {reason}",
+      "notConfigured": "Watcharr is not configured. Please log in through the settings first.",
+      "noServiceTab": "No open {service} tab found. Open {service} and log in.",
+      "serviceTabPrepare": "The {service} tab could not be prepared. Please reload the {service} page and try again. ({reason})",
+      "noResponse": "No response from the service tab received.",
+      "authFailed": "Authentication failed – please log in again.",
+      "noMatch": "no match in Watcharr",
+      "createFailed": "Create failed (no watched ID in the response)."
+    }
   }
 }

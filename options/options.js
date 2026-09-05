@@ -90,17 +90,61 @@ function clearBanner() {
 
 function loginLabelKey(m) {
   return m === "jellyfin"
-    ? "settings.connectJellyfin"
+    ? useEmby
+      ? "settings.connectEmby"
+      : "settings.connectJellyfin"
     : m === "plex"
       ? "settings.connectPlex"
       : "settings.saveConnect";
 }
 
+// Stable error codes from the background (background/watcharr-client.js)
+// mapped to fully composed, localized messages. Server/network reasons are
+// carried as params; unknown codes fall back to a translated wrapper.
+async function loginErrorMessage(err) {
+  const code = err && err.errorCode;
+  const params = (err && err.errorParams) || {};
+  const raw = (err && (err.error || err.message)) || "";
+  switch (code) {
+    case "connection_failed":
+      return t("settings.error.connection", {
+        reason: params.reason || raw,
+      });
+    case "login_rejected":
+      return t("settings.loginFailed", { error: params.reason || raw });
+    case "no_token":
+      return t("settings.error.noToken");
+    case "plex_network":
+      return t("settings.error.plexNetwork", {
+        reason: params.reason || raw,
+      });
+    case "plex_http":
+      return t("settings.error.plexHttp", { status: params.status || "" });
+    case "plex_invalid":
+      return t("settings.error.plexInvalid");
+    case "not_configured":
+      return t("settings.notConfigured");
+    case "url_not_configured":
+      return t("settings.missingUrl");
+    case "no_active_plex":
+      return t("settings.plexTimeout");
+    default:
+      if (raw) return t("settings.loginFailed", { error: raw });
+      return t("settings.error.generic");
+  }
+}
+
 // Emby is a server-side setting (useEmby). When on, Watcharr labels the same
-// "jellyfin" method as "emby" – mirror that on the button.
+// "jellyfin" method as "emby" – mirror that on the button through i18n
+// (settings.providerEmby) instead of a hardcoded string.
 function refreshProviderLabels() {
   const btn = els.providerGroup.querySelector('[data-method="jellyfin"]');
-  if (btn && useEmby) btn.textContent = "Emby";
+  if (btn && useEmby) {
+    btn.textContent =
+      I18NApi && I18NApi.tSync
+        ? I18NApi.tSync("settings.providerEmby", {}, currentLanguage)
+        : "Emby";
+  }
 }
 
 function renderProviders(list) {
@@ -301,18 +345,10 @@ async function login() {
       );
       await load();
     } else {
-      showBanner(
-        "error",
-        await t("settings.loginFailed", {
-          error: resp ? resp.error : "unknown error",
-        }),
-      );
+      showBanner("error", await loginErrorMessage(resp));
     }
   } catch (err) {
-    showBanner(
-      "error",
-      await t("settings.loginFailed", { error: err.message }),
-    );
+    showBanner("error", await loginErrorMessage(err));
   } finally {
     setLoginBusy(false, await t(loginLabelKey(method)));
   }
@@ -350,8 +386,7 @@ async function startPlexLogin() {
       type: "watcharr:plex:begin",
       url,
     });
-    if (!resp || !resp.ok)
-      throw new Error(resp ? resp.error : "Could not start Plex login.");
+    if (!resp || !resp.ok) throw new Error(await loginErrorMessage(resp));
     if (!popup) throw new Error(await t("settings.plexPopupBlocked"));
 
     plexPopup = popup;
@@ -374,10 +409,9 @@ async function startPlexLogin() {
     } catch (_) {}
     setLoginBusy(false);
     updateLoginView();
-    showBanner(
-      "error",
-      await t("settings.loginFailed", { error: err.message }),
-    );
+    // `err` was already composed from translated parts (loginErrorMessage /
+    // plexPopupBlocked), so it is shown directly without another wrapper.
+    showBanner("error", err.message);
   }
 }
 
@@ -412,7 +446,11 @@ async function pollPlex() {
     await finishPlexLogin(resp.authToken);
     return;
   }
-  if (resp && resp.ok === false && /no active/i.test(resp.error || "")) {
+  if (
+    resp &&
+    resp.ok === false &&
+    (resp.errorCode === "no_active_plex" || /no active/i.test(resp.error || ""))
+  ) {
     // Nothing left to wait for – the flow was consumed or reset.
     stopPlexPolling();
     showBanner("info", await t("settings.plexTimeout"));
@@ -455,20 +493,12 @@ async function finishPlexLogin(authToken) {
     } else {
       setLoginBusy(false);
       updateLoginView();
-      showBanner(
-        "error",
-        await t("settings.loginFailed", {
-          error: resp ? resp.error : "unknown error",
-        }),
-      );
+      showBanner("error", await loginErrorMessage(resp));
     }
   } catch (err) {
     setLoginBusy(false);
     updateLoginView();
-    showBanner(
-      "error",
-      await t("settings.loginFailed", { error: err.message }),
-    );
+    showBanner("error", await loginErrorMessage(err));
   }
 }
 

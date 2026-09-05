@@ -45,15 +45,25 @@
     "providerWatcharr": "Watcharr",
     "providerJellyfin": "Jellyfin",
     "providerPlex": "Plex",
+    "providerEmby": "Emby",
     "connectJellyfin": "Mit Jellyfin verbinden",
     "connectPlex": "Mit Plex fortfahren",
+    "connectEmby": "Mit Emby verbinden",
     "jellyfinHint": "Melde dich mit deinen Jellyfin-Zugangsdaten an. Dein Watcharr-Server muss den Jellyfin-Host eingerichtet haben.",
     "plexHint": "Es öffnet sich ein Popup auf plex.tv, in dem du dich anmeldest und den Zugriff bestätigst. Dein Watcharr-Server muss den Plex-Host eingerichtet haben.",
     "plexWaiting": "Warte auf Plex…",
     "plexClosed": "Das Plex-Anmeldefenster wurde geschlossen.",
     "plexTimeout": "Die Plex-Anmeldung ist abgelaufen – bitte erneut versuchen.",
     "plexPopupBlocked": "Das Plex-Popup konnte nicht geöffnet werden. Bitte erlaube Popups für diese Seite.",
-    "missingUrl": "Bitte gib zuerst deine Watcharr-URL ein."
+    "missingUrl": "Bitte gib zuerst deine Watcharr-URL ein.",
+    "error": {
+      "generic": "Ein unbekannter Fehler ist aufgetreten.",
+      "connection": "Verbindung zu Watcharr fehlgeschlagen: {reason}",
+      "noToken": "Der Server hat kein Anmeldetoken zurückgegeben.",
+      "plexNetwork": "plex.tv konnte nicht erreicht werden: {reason}",
+      "plexHttp": "plex.tv-Anfrage fehlgeschlagen (HTTP {status}).",
+      "plexInvalid": "plex.tv hat eine ungültige PIN zurückgegeben."
+    }
   },
   "popup": {
     "nowPlaying": "Aktuell auf {service}",
@@ -148,7 +158,18 @@
     "badgeReaddTitle": "In Watcharr bereits als gesehen eingetragen, nur nicht für dieses Datum – Import fügt dieses Schaudatum hinzu.",
     "metadataMovie": "Film",
     "metadataSeries": "Serie",
+    "metadataPerson": "Person",
     "metadataOn": "am {date}",
-    "noMatchFilter": "Keine Einträge für den Filter \"{filter}\"."
+    "noMatchFilter": "Keine Einträge für den Filter \"{filter}\".",
+    "error": {
+      "generic": "Ein Fehler ist aufgetreten: {reason}",
+      "notConfigured": "Watcharr ist nicht konfiguriert. Bitte melde dich zuerst in den Einstellungen an.",
+      "noServiceTab": "Kein offener {service}-Tab gefunden. Öffne {service} und melde dich an.",
+      "serviceTabPrepare": "Der {service}-Tab konnte nicht vorbereitet werden. Bitte lade die {service}-Seite neu und versuche es erneut. ({reason})",
+      "noResponse": "Keine Antwort vom Dienst-Tab empfangen.",
+      "authFailed": "Authentifizierung fehlgeschlagen – bitte erneut anmelden.",
+      "noMatch": "keine Übereinstimmung in Watcharr",
+      "createFailed": "Erstellen fehlgeschlagen (keine watched-ID in der Antwort)."
+    }
   }
 }

@@ -29,6 +29,7 @@ const WatcharrHistory = (() => {
   let done = false; // complete service history loaded?
   let loading = false; // currently loading a batch?
   let loadError = null; // last error when loading
+  let loadErrorCode = null; // stable i18n code of the last load error
   let seq = 0; // sequential key for stable item keys
   // Session display order: show the history OLDEST first? The services return
   // the newest entry first (page 0 = top of the list), so this mode loads the
@@ -56,6 +57,16 @@ const WatcharrHistory = (() => {
 
   const log = (...a) => console.log("[watcharr-bg]", ...a);
   const logErr = (...a) => console.error("[watcharr-bg]", ...a);
+
+  /** Builds a user-facing Error carrying a stable i18n code + params. The UI
+   *  translates these codes (see history/history.js), so extension-authored
+   *  error copy is localized instead of shown raw. */
+  function userError(code, message, params) {
+    const e = new Error(message);
+    e.userCode = code;
+    e.userParams = params || {};
+    return e;
+  }
 
   const normTitle = (s) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -100,8 +111,10 @@ const WatcharrHistory = (() => {
     );
     if (!candidates.length) {
       logErr("ensureServiceTab: no open", svc.name, "tab found");
-      throw new Error(
+      throw userError(
+        "no_service_tab",
         "No open " + svc.name + " tab found. Open " + svc.name + " and log in.",
+        { service: svc.name },
       );
     }
 
@@ -132,13 +145,15 @@ const WatcharrHistory = (() => {
       });
     } catch (e) {
       logErr("ensureServiceTab: Injection failed:", e.message);
-      throw new Error(
+      throw userError(
+        "service_tab_prepare",
         svc.name +
           " tab could not be prepared. Please reload the " +
           svc.name +
           " page and try again. (" +
           (e.message || String(e)) +
           ")",
+        { service: svc.name, reason: e.message || String(e) },
       );
     }
     // Wait briefly so that injected scripts (and, for Netflix, the probe in
@@ -164,8 +179,14 @@ const WatcharrHistory = (() => {
       loadId: historyLoadId,
     });
     if (!resp || resp.status !== "ok") {
-      throw new Error(
-        (resp && resp.error) || "No response from the service tab received.",
+      // A real reason from the service/content script (e.g. "please log in")
+      // is surfaced through the translated generic wrapper in the UI; the
+      // generic code is only used when there is genuinely no reply.
+      const reason = (resp && resp.error) || "";
+      if (reason) throw new Error(reason);
+      throw userError(
+        "no_service_response",
+        "No response from the service tab received.",
       );
     }
     const entries = resp.entries || [];
@@ -220,6 +241,7 @@ const WatcharrHistory = (() => {
         : null,
       match: null,
       matchError: null,
+      matchErrorCode: null,
       // Status of the specific episode in Watcharr (null | "FINISHED" | "WATCHING" | ...)
       episodeStatus: null,
       // false = unknown (fetch failed / no episode info)
@@ -230,6 +252,7 @@ const WatcharrHistory = (() => {
       selected: false,
       status: "pending",
       error: null,
+      errorCode: null,
       resolved: false,
     };
   }
@@ -237,7 +260,7 @@ const WatcharrHistory = (() => {
   async function searchWatcharr(title, year) {
     const s = await getSettings();
     if (!s.watcharrUrl || !s.token)
-      throw new Error("Watcharr ist nicht konfiguriert.");
+      throw userError("not_configured", "Watcharr is not configured.");
     const c = new WatcharrClient(s);
     const query = year ? title + " year:" + year : title;
     const data = await c.search(query, "multi");
@@ -318,8 +341,7 @@ const WatcharrHistory = (() => {
       for (const a of acts) {
         if (
           !a ||
-          (a.type !== "EPISODE_ADDED" &&
-            a.type !== "EPISODE_STATUS_CHANGED")
+          (a.type !== "EPISODE_ADDED" && a.type !== "EPISODE_STATUS_CHANGED")
         ) {
           continue;
         }
@@ -398,12 +420,14 @@ const WatcharrHistory = (() => {
       episode: it.episode,
       match: it.match,
       matchError: it.matchError,
+      matchErrorCode: it.matchErrorCode || null,
       episodeStatus: it.episodeStatus,
       episodeStatusKnown: it.episodeStatusKnown,
       episodeDateMatched: it.episodeDateMatched,
       selected: it.selected,
       status: it.status,
       error: it.error,
+      errorCode: it.errorCode || null,
     };
   }
 
@@ -423,7 +447,8 @@ const WatcharrHistory = (() => {
         !!s.token,
         ")",
       );
-      throw new Error(
+      throw userError(
+        "not_configured",
         "Watcharr is not configured. Please log in through settings first.",
       );
     }
@@ -461,6 +486,7 @@ const WatcharrHistory = (() => {
     if (loading || done) return { items: [], total, done };
     loading = true;
     loadError = null;
+    loadErrorCode = null;
     log("fetchMore: loading", serviceId, "page", page);
     try {
       const { entries, done: d } = await historyPage(page);
@@ -567,15 +593,23 @@ const WatcharrHistory = (() => {
             total,
             done: delivered >= items.length,
             error: loadError,
+            errorCode: loadErrorCode,
           };
         if (delivered >= items.length)
-          return { items: [], total, done: true, error: loadError };
+          return {
+            items: [],
+            total,
+            done: true,
+            error: loadError,
+            errorCode: loadErrorCode,
+          };
         const res = await deliverBatch();
         return {
           items: res.items,
           total: res.total,
           done: res.done,
           error: loadError,
+          errorCode: loadErrorCode,
         };
       }
       const res = await fetchMore(BATCH_SIZE);
@@ -584,11 +618,19 @@ const WatcharrHistory = (() => {
         total: res.total,
         done: res.done,
         error: loadError,
+        errorCode: loadErrorCode,
       };
     } catch (err) {
       logErr("more: Error:", err.message);
       loadError = err.message;
-      return { items: [], total, done, error: err.message };
+      loadErrorCode = (err && err.userCode) || null;
+      return {
+        items: [],
+        total,
+        done,
+        error: err.message,
+        errorCode: loadErrorCode,
+      };
     }
   }
 
@@ -599,10 +641,12 @@ const WatcharrHistory = (() => {
       const results = await searchWatcharr(it.title, it.year);
       it.match = resultToMatch(pickBest(results, it.title, it.isTv));
       it.matchError = it.match ? null : "no match in Watcharr";
+      it.matchErrorCode = it.match ? null : "no_match";
       // Series: check if exactly THIS episode is already watched in Watcharr.
       await resolveItemEpisodeStatus(it);
     } catch (e) {
       it.matchError = e.message;
+      it.matchErrorCode = (e && e.userCode) || null;
     }
     // On load, nothing is pre-selected – the user chooses
     // manually what to import (or uses "Select all").
@@ -623,19 +667,22 @@ const WatcharrHistory = (() => {
     if (it.key && !itemMap.has(it.key)) itemMap.set(it.key, it);
     it.match = resultToMatch(result);
     it.matchError = it.match ? null : "no match";
+    it.matchErrorCode = it.match ? null : "no_match";
     // Determine episode status for the new match (display only).
     await resolveItemEpisodeStatus(it);
     // New match = new state: discard old import status so the
     // row becomes selectable again if the new match is not yet in Watcharr.
     it.status = "pending";
     it.error = null;
+    it.errorCode = null;
     // Manually selected matches remain selected (as before).
     it.selected = !!it.match;
     return serializeItem(it);
   }
 
   async function importOne(c, it) {
-    if (!it.match) return { status: "skipped", error: "no match" };
+    if (!it.match)
+      return { status: "skipped", error: "no match", code: "no_match" };
     const { tmdbId, watchedId, watchedStatus } = it.match;
     const watchedDate = it.date || null;
 
@@ -670,7 +717,11 @@ const WatcharrHistory = (() => {
             );
             return { status: "updated", episodes: 1 };
           } catch (e) {
-            return { status: "error", error: e.message };
+            return {
+              status: "error",
+              error: e.message,
+              code: (e && e.userCode) || null,
+            };
           }
         }
         return { status: "updated", episodes: 0 };
@@ -694,6 +745,7 @@ const WatcharrHistory = (() => {
           return {
             status: "error",
             error: "Create failed (no watchedId in response)",
+            code: "create_failed",
           };
         }
         if (it.season != null && it.episode != null) {
@@ -711,7 +763,11 @@ const WatcharrHistory = (() => {
           episodes: it.season != null && it.episode != null ? 1 : 0,
         };
       } catch (e) {
-        return { status: "error", error: e.message };
+        return {
+          status: "error",
+          error: e.message,
+          code: (e && e.userCode) || null,
+        };
       }
     }
 
@@ -721,7 +777,11 @@ const WatcharrHistory = (() => {
         try {
           await c.updateWatched(watchedId, { status: "FINISHED" });
         } catch (e) {
-          return { status: "error", error: e.message };
+          return {
+            status: "error",
+            error: e.message,
+            code: (e && e.userCode) || null,
+          };
         }
       }
       return { status: "updated" };
@@ -740,11 +800,16 @@ const WatcharrHistory = (() => {
         return {
           status: "error",
           error: "Create failed (no watchedId in response)",
+          code: "create_failed",
         };
       }
       return { status: "imported", watchedId: wid };
     } catch (e) {
-      return { status: "error", error: e.message };
+      return {
+        status: "error",
+        error: e.message,
+        code: (e && e.userCode) || null,
+      };
     }
   }
 
@@ -761,7 +826,7 @@ const WatcharrHistory = (() => {
   async function importItems(keys) {
     const s = await getSettings();
     if (!s.watcharrUrl || !s.token)
-      throw new Error("Watcharr is not configured.");
+      throw userError("not_configured", "Watcharr is not configured.");
     const c = new WatcharrClient(s);
     const results = [];
 
@@ -802,6 +867,7 @@ const WatcharrHistory = (() => {
       const r = await importOne(c, it);
       it.status = r.status;
       it.error = r.error || null;
+      it.errorCode = r.code || null;
       if (r.watchedId && it.match) {
         it.match.watchedId = r.watchedId;
         if (it.isTv) createdSeries.set(it.match.tmdbId, r.watchedId);
@@ -811,6 +877,7 @@ const WatcharrHistory = (() => {
         title: it.title,
         status: r.status,
         error: r.error,
+        code: r.code || null,
         episodes: r.episodes,
         watchedId: r.watchedId || null,
       });

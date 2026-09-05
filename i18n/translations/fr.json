@@ -45,15 +45,25 @@
     "providerWatcharr": "Watcharr",
     "providerJellyfin": "Jellyfin",
     "providerPlex": "Plex",
+    "providerEmby": "Emby",
     "connectJellyfin": "Se connecter avec Jellyfin",
     "connectPlex": "Continuer avec Plex",
+    "connectEmby": "Se connecter avec Emby",
     "jellyfinHint": "Connectez-vous avec vos identifiants Jellyfin. Votre serveur Watcharr doit avoir l'hôte Jellyfin configuré.",
     "plexHint": "Une fenêtre s'ouvrira sur plex.tv pour vous connecter et autoriser l'accès. Votre serveur Watcharr doit avoir l'hôte Plex configuré.",
     "plexWaiting": "En attente de Plex…",
     "plexClosed": "La fenêtre de connexion Plex a été fermée.",
     "plexTimeout": "La connexion Plex a expiré – veuillez réessayer.",
     "plexPopupBlocked": "Impossible d'ouvrir la fenêtre Plex. Autorisez les fenêtres pop-up pour cette page.",
-    "missingUrl": "Saisissez d'abord l'URL Watcharr."
+    "missingUrl": "Saisissez d'abord l'URL Watcharr.",
+    "error": {
+      "generic": "Une erreur inconnue s'est produite.",
+      "connection": "Impossible de se connecter à Watcharr : {reason}",
+      "noToken": "Le serveur n'a renvoyé aucun jeton de connexion.",
+      "plexNetwork": "Impossible de joindre plex.tv : {reason}",
+      "plexHttp": "La requête à plex.tv a échoué (HTTP {status}).",
+      "plexInvalid": "plex.tv a renvoyé un code PIN invalide."
+    }
   },
   "popup": {
     "nowPlaying": "Actuellement sur {service}",
@@ -148,7 +158,18 @@
     "badgeReaddTitle": "Déjà terminé dans Watcharr – l'importation ajoute une autre date de visionnage.",
     "metadataMovie": "Film",
     "metadataSeries": "Série",
+    "metadataPerson": "Personne",
     "metadataOn": "le {date}",
-    "noMatchFilter": "Aucune entrée pour le filtre \"{filter}\"."
+    "noMatchFilter": "Aucune entrée pour le filtre \"{filter}\".",
+    "error": {
+      "generic": "Une erreur est survenue : {reason}",
+      "notConfigured": "Watcharr n'est pas configuré. Connectez-vous d'abord dans les paramètres.",
+      "noServiceTab": "Aucun onglet {service} ouvert. Ouvrez {service} et connectez-vous.",
+      "serviceTabPrepare": "L'onglet {service} n'a pas pu être préparé. Rechargez la page {service} et réessayez. ({reason})",
+      "noResponse": "Aucune réponse reçue de l'onglet du service.",
+      "authFailed": "Échec de l'authentification – veuillez vous reconnecter.",
+      "noMatch": "aucune correspondance dans Watcharr",
+      "createFailed": "Création impossible (aucun identifiant de visionnage dans la réponse)."
+    }
   }
 }

@@ -31,6 +31,53 @@ function ts(key, params) {
     : key;
 }
 
+// Stable error codes produced by the background scripts (background/history.js
+// and background/watcharr-client.js) mapped to translation keys, so extension-
+// authored error copy is localized instead of shown raw. Unknown/arbitrary
+// (server) messages fall back to the translated generic wrapper below.
+const ERROR_KEYS = {
+  not_configured: "history.error.notConfigured",
+  no_service_tab: "history.error.noServiceTab",
+  service_tab_prepare: "history.error.serviceTabPrepare",
+  no_service_response: "history.error.noResponse",
+  auth_failed: "history.error.authFailed",
+  no_match: "history.error.noMatch",
+  create_failed: "history.error.createFailed",
+};
+
+// TMDB multi-search result types shown in the "change match" popover.
+const SEARCH_TYPE_KEYS = {
+  movie: "history.metadataMovie",
+  tv: "history.metadataSeries",
+  person: "history.metadataPerson",
+};
+
+/** Localized label of a TMDB search-result type ("movie"/"tv"/"person"). */
+function searchTypeLabel(type) {
+  return (SEARCH_TYPE_KEYS[type] && ts(SEARCH_TYPE_KEYS[type])) || type;
+}
+
+/** Full translated text for an error that may carry { errorCode, errorParams }
+ *  (a background response or a locally thrown Error). `fallbackKey` is used
+ *  when nothing usable is available. */
+async function describeError(err, fallbackKey) {
+  if (err && err.errorCode && ERROR_KEYS[err.errorCode]) {
+    return t(ERROR_KEYS[err.errorCode], (err && err.errorParams) || {});
+  }
+  const raw = (err && (err.error || err.message)) || "";
+  if (raw) return t("history.error.generic", { reason: raw });
+  return t(fallbackKey || "history.loadingFailed");
+}
+
+/** Row-level caption: translated for known codes (matchErrorCode/errorCode),
+ *  otherwise the raw server message is kept (data, not UI copy). */
+function rowErrorText(it, useMatchError) {
+  const code = useMatchError ? it.matchErrorCode : it.errorCode;
+  const raw = useMatchError ? it.matchError : it.error;
+  if (code && ERROR_KEYS[code]) return ts(ERROR_KEYS[code]);
+  return raw || "";
+}
+
 async function applyLanguage(lang) {
   currentLanguage = I18NApi.resolveLanguage(lang);
   await I18NApi.applyTranslations(currentLanguage, document);
@@ -367,7 +414,7 @@ function rowHtml(it) {
         ? " · " + ts("history.metadataMovie")
         : " · " + ts("history.metadataSeries")) +
       (it.match.year ? " · " + it.match.year : "")
-    : it.matchError || "—";
+    : rowErrorText(it, true) || "—";
 
   const transferred = isTransferred(it);
   return (
@@ -403,7 +450,9 @@ function rowHtml(it) {
     statusBadge(it) +
     "</div>" +
     (it.error
-      ? '<div class="row-error">' + escapeHtml(it.error) + "</div>"
+      ? '<div class="row-error">' +
+        escapeHtml(rowErrorText(it, false)) +
+        "</div>"
       : "") +
     "</div>" +
     "</div>" +
@@ -600,9 +649,7 @@ async function load() {
       return;
     }
     if (!resp || !resp.ok)
-      throw new Error(
-        (resp && resp.error) || (await t("history.loadingFailed")),
-      );
+      throw new Error(await describeError(resp, "history.loadingFailed"));
     ok = true;
     allItems = resp.items || [];
     total = resp.total != null ? resp.total : allItems.length;
@@ -650,9 +697,7 @@ async function loadMore() {
       service: serviceId,
     });
     if (!resp || !resp.ok)
-      throw new Error(
-        (resp && resp.error) || (await t("history.loadingFailed")),
-      );
+      throw new Error(await describeError(resp, "history.loadingFailed"));
     if (gen !== loadGen) return; // a fresh load replaced this list – discard
     const newItems = resp.items || [];
     allItems.push(...newItems);
@@ -660,7 +705,7 @@ async function loadMore() {
     allLoaded = !!resp.done;
     appendItems(newItems);
     if (resp.error) {
-      setStatus("error", resp.error);
+      setStatus("error", await describeError(resp, "history.loadingFailed"));
     } else if (allLoaded) {
       clearStatus();
       setStatus("success", await t("history.titlesLoadedAll", { total }));
@@ -886,7 +931,7 @@ els.list.addEventListener("click", async (e) => {
             "</div>" +
             '<div class="meta">' +
             escapeHtml(
-              (r.type || "").replace("tmdb_", "") +
+              searchTypeLabel((r.type || "").replace("tmdb_", "")) +
                 (r.releaseDate
                   ? " · " + String(r.releaseDate).slice(0, 4)
                   : ""),
@@ -940,10 +985,10 @@ async function rematch(key, result) {
       ts("history.matchUpdated", { title: resp.item.title || key }),
     );
   } else {
-    setStatus(
-      "error",
-      (resp && resp.error) || ts("history.matchCouldNotBeUpdated"),
-    );
+    const msg = resp
+      ? await describeError(resp, "history.matchCouldNotBeUpdated")
+      : ts("history.matchCouldNotBeUpdated");
+    setStatus("error", msg);
   }
 }
 
@@ -977,9 +1022,7 @@ els.importBtn.addEventListener("click", async () => {
       keys,
     });
     if (!resp || !resp.ok)
-      throw new Error(
-        (resp && resp.error) || (await t("history.loadingFailed")),
-      );
+      throw new Error(await describeError(resp, "history.loadingFailed"));
     const results = resp.results || [];
     const byKey = {};
     for (const r of results) byKey[r.key] = r;
@@ -987,6 +1030,7 @@ els.importBtn.addEventListener("click", async () => {
       if (byKey[it.key]) {
         it.status = byKey[it.key].status;
         it.error = byKey[it.key].error || null;
+        it.errorCode = byKey[it.key].code || null;
         if (
           it.status === "imported" ||
           it.status === "updated" ||

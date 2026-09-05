@@ -9,6 +9,16 @@
  */
 "use strict";
 
+/** Builds an Error carrying a stable i18n code + params. The UI maps these
+ *  codes to translation keys (see options/options.js and history/history.js)
+ *  so extension-authored error copy is localized instead of shown raw. */
+function clientError(code, message, params) {
+  const e = new Error(message);
+  e.userCode = code;
+  e.userParams = params || {};
+  return e;
+}
+
 class WatcharrClient {
   constructor(settings) {
     this.url = (settings.watcharrUrl || "").replace(/\/+$/, "");
@@ -20,7 +30,11 @@ class WatcharrClient {
   }
 
   async _request(method, path, body) {
-    if (!this.url) throw new Error("Watcharr URL is not configured.");
+    if (!this.url)
+      throw clientError(
+        "url_not_configured",
+        "Watcharr URL is not configured.",
+      );
     const headers = { "Content-Type": "application/json" };
     if (this.token) headers["Authorization"] = this.token;
 
@@ -33,11 +47,18 @@ class WatcharrClient {
         credentials: "omit",
       });
     } catch (err) {
-      throw new Error("Connection to Watcharr failed: " + err.message);
+      throw clientError(
+        "connection_failed",
+        "Connection to Watcharr failed: " + err.message,
+        { reason: err.message },
+      );
     }
 
     if (resp.status === 401 || resp.status === 403) {
-      const e = new Error("Authentication failed – please log in again.");
+      const e = clientError(
+        "auth_failed",
+        "Authentication failed – please log in again.",
+      );
       e.authRequired = true;
       throw e;
     }
@@ -50,7 +71,7 @@ class WatcharrClient {
       } catch (_) {
         /* no json body */
       }
-      throw new Error(msg);
+      throw clientError("watcharr_error", msg, { reason: msg });
     }
 
     if (resp.status === 204) return null;
@@ -72,7 +93,11 @@ class WatcharrClient {
    * server (JELLYFIN_HOST) – Watcharr validates the credentials against it.
    */
   async login(username, password, method) {
-    if (!this.url) throw new Error("Watcharr URL is not configured.");
+    if (!this.url)
+      throw clientError(
+        "url_not_configured",
+        "Watcharr URL is not configured.",
+      );
     const path = method === "jellyfin" ? "/auth/jellyfin" : "/auth/";
     let resp;
     try {
@@ -83,7 +108,11 @@ class WatcharrClient {
         credentials: "omit",
       });
     } catch (err) {
-      throw new Error("Connection to Watcharr failed: " + err.message);
+      throw clientError(
+        "connection_failed",
+        "Connection to Watcharr failed: " + err.message,
+        { reason: err.message },
+      );
     }
     if (!resp.ok) {
       let msg = "HTTP " + resp.status;
@@ -93,11 +122,13 @@ class WatcharrClient {
       } catch (_) {
         /* no json body */
       }
-      throw new Error("Login failed: " + msg);
+      throw clientError("login_rejected", "Login failed: " + msg, {
+        reason: msg,
+      });
     }
     const data = await resp.json();
     if (!data || !data.token)
-      throw new Error("Login failed: no token in response.");
+      throw clientError("no_token", "Login failed: no token in response.");
     return data.token;
   }
 
@@ -106,7 +137,11 @@ class WatcharrClient {
    * identifier to Watcharr, which verifies access and returns the JWT token.
    */
   async loginPlex(authToken, clientIdentifier) {
-    if (!this.url) throw new Error("Watcharr URL is not configured.");
+    if (!this.url)
+      throw clientError(
+        "url_not_configured",
+        "Watcharr URL is not configured.",
+      );
     let resp;
     try {
       resp = await fetch(this.url + "/api/auth/plex", {
@@ -116,7 +151,11 @@ class WatcharrClient {
         credentials: "omit",
       });
     } catch (err) {
-      throw new Error("Connection to Watcharr failed: " + err.message);
+      throw clientError(
+        "connection_failed",
+        "Connection to Watcharr failed: " + err.message,
+        { reason: err.message },
+      );
     }
     if (!resp.ok) {
       let msg = "HTTP " + resp.status;
@@ -126,11 +165,13 @@ class WatcharrClient {
       } catch (_) {
         /* no json body */
       }
-      throw new Error("Login failed: " + msg);
+      throw clientError("login_rejected", "Login failed: " + msg, {
+        reason: msg,
+      });
     }
     const data = await resp.json();
     if (!data || !data.token)
-      throw new Error("Login failed: no token in response.");
+      throw clientError("no_token", "Login failed: no token in response.");
     return data.token;
   }
 
@@ -196,7 +237,6 @@ class WatcharrClient {
   getWatchedShow(tmdbId) {
     return this._request("GET", "/content/tv/" + Number(tmdbId));
   }
-
 }
 
 /**
@@ -228,14 +268,22 @@ const PlexTvAuth = {
         credentials: "omit",
       });
     } catch (err) {
-      throw new Error("Connection to plex.tv failed: " + err.message);
+      throw clientError(
+        "plex_network",
+        "Connection to plex.tv failed: " + err.message,
+        { reason: err.message },
+      );
     }
     if (!resp.ok) {
-      throw new Error("plex.tv pin request failed (HTTP " + resp.status + ").");
+      throw clientError(
+        "plex_http",
+        "plex.tv pin request failed (HTTP " + resp.status + ").",
+        { status: resp.status },
+      );
     }
     const data = await resp.json();
     if (!data || !data.id || !data.code)
-      throw new Error("plex.tv returned an invalid pin.");
+      throw clientError("plex_invalid", "plex.tv returned an invalid pin.");
     return { id: data.id, code: data.code };
   },
 
@@ -252,10 +300,18 @@ const PlexTvAuth = {
         credentials: "omit",
       });
     } catch (err) {
-      throw new Error("Connection to plex.tv failed: " + err.message);
+      throw clientError(
+        "plex_network",
+        "Connection to plex.tv failed: " + err.message,
+        { reason: err.message },
+      );
     }
     if (!resp.ok) {
-      throw new Error("plex.tv pin poll failed (HTTP " + resp.status + ").");
+      throw clientError(
+        "plex_http",
+        "plex.tv pin poll failed (HTTP " + resp.status + ").",
+        { status: resp.status },
+      );
     }
     const data = await resp.json();
     return (data && data.authToken) || null;
