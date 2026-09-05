@@ -444,6 +444,14 @@ button:disabled {
   color: var(--purple);
 }
 
+/* Episode already FINISHED in Watcharr, but not at this exact date -> an
+   import just adds another watched date. */
+.badge.readd {
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.45);
+  color: #2dd4bf;
+}
+
 /* Error message directly at the row (when the import failed) */
 .row-error {
   color: var(--red);

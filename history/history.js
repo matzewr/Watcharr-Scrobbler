@@ -44,6 +44,7 @@ const els = {
   filterBox: $("#filterBox"),
   importBtn: $("#importBtn"),
   orderBtn: $("#orderBtn"),
+  matchModeBtn: $("#matchModeBtn"),
   confirmModal: $("#confirmModal"),
   orderOkBtn: $("#orderOkBtn"),
   orderCancelBtn: $("#orderCancelBtn"),
@@ -68,6 +69,10 @@ let loadGen = 0;
 // Session-only display order: false = newest first (default, incremental),
 // true = oldest first (the complete history is loaded once, oldest on top).
 let oldestFirst = false;
+// Session-only matching mode: true = exact (a Netflix row only counts as
+// "recorded" when the FINISHED activity matches date AND time), false =
+// rough (only checks whether the episode is already watched/finished).
+let exactMatch = true;
 
 function escapeHtml(s) {
   return String(s == null ? "" : s)
@@ -130,9 +135,35 @@ function posterUrl(it) {
     : null;
 }
 
-/** Is an episode considered "watched"? (WATCHING counts as watched.) */
+/** Rough check: is the episode already watched in Watcharr at all?
+ * (FINISHED or WATCHING counts as watched.) */
 function episodeSeen(status) {
   return status === "FINISHED" || status === "WATCHING";
+}
+
+/** The episode itself is FINISHED in Watcharr (independent of the date). */
+function episodeFinished(it) {
+  return !!(
+    it.isTv &&
+    it.season != null &&
+    it.episode != null &&
+    it.episodeStatusKnown &&
+    it.episodeStatus === "FINISHED"
+  );
+}
+
+/** True only when this Netflix row is already recorded in Watcharr at the
+ * exact same date+time: the episode has a FINISHED activity (EPISODE_ADDED /
+ * EPISODE_STATUS_CHANGED) whose customDate matches the row's date+time.
+ * customDate is the watched date that was passed to the API. */
+function episodeRecordedAtDate(it) {
+  return !!(
+    it.isTv &&
+    it.season != null &&
+    it.episode != null &&
+    it.episodeStatusKnown &&
+    it.episodeDateMatched
+  );
 }
 
 /** Already transferred rows are not selectable. */
@@ -152,14 +183,18 @@ function isTransferred(it) {
   }
   // Match is not yet in Watcharr -> selectable.
   if (!it.match.watchedId) return false;
-  // Series: only transferred when the specific episode is watched.
+  // Series with known episode: the decision depends on the matching mode.
   if (
     it.isTv &&
     it.season != null &&
     it.episode != null &&
     it.episodeStatusKnown
   ) {
-    return episodeSeen(it.episodeStatus);
+    // Exact: only the identical watch (same date AND time) is transferred.
+    // Rough: any watched/finished episode is transferred.
+    return exactMatch
+      ? episodeRecordedAtDate(it)
+      : episodeSeen(it.episodeStatus);
   }
   // Movie or series without known episode / unknown status -> already in Watcharr.
   return true;
@@ -180,23 +215,61 @@ function matchBadge(it) {
     it.episodeStatusKnown
   ) {
     const label = "S" + it.season + "E" + it.episode;
-    if (episodeSeen(it.episodeStatus)) {
-      return (
-        '<span class="badge inwatcharr">' +
-        label +
-        " " +
-        escapeHtml(ts("history.badgeWatched")) +
-        "</span>"
-      );
-    }
-    if (it.match.watchedId) {
-      return (
-        '<span class="badge missing">' +
-        label +
-        " " +
-        escapeHtml(ts("history.badgeMissing")) +
-        "</span>"
-      );
+    if (exactMatch) {
+      // Exact mode: only the identical watch (date AND time) counts.
+      if (episodeRecordedAtDate(it)) {
+        // Recorded in Watcharr at the exact same date+time.
+        return (
+          '<span class="badge inwatcharr">' +
+          label +
+          " " +
+          escapeHtml(ts("history.badgeWatched")) +
+          "</span>"
+        );
+      }
+      // Episode is already FINISHED in Watcharr, but not with THIS date.
+      // Importing therefore simply adds another watched date.
+      if (episodeFinished(it)) {
+        return (
+          '<span class="badge readd" title="' +
+          escapeHtml(ts("history.badgeReaddTitle")) +
+          '">' +
+          label +
+          " " +
+          escapeHtml(ts("history.badgeReadd")) +
+          "</span>"
+        );
+      }
+      if (it.match.watchedId) {
+        // Series in Watcharr, but this exact watch (date+time) is not recorded.
+        return (
+          '<span class="badge missing">' +
+          label +
+          " " +
+          escapeHtml(ts("history.badgeMissing")) +
+          "</span>"
+        );
+      }
+    } else {
+      // Rough mode: only check whether the episode is already watched.
+      if (episodeSeen(it.episodeStatus)) {
+        return (
+          '<span class="badge inwatcharr">' +
+          label +
+          " " +
+          escapeHtml(ts("history.badgeWatched")) +
+          "</span>"
+        );
+      }
+      if (it.match.watchedId) {
+        return (
+          '<span class="badge missing">' +
+          label +
+          " " +
+          escapeHtml(ts("history.badgeMissing")) +
+          "</span>"
+        );
+      }
     }
   }
   if (it.match.watchedId) {
@@ -432,6 +505,32 @@ function updateOrderBtn() {
     mode: ts(oldestFirst ? "history.newestFirst" : "history.oldestFirst"),
   });
 }
+
+/** Updates the matching-mode toggle (label/title = current mode).
+ * "Exact" is shown in the normal (neutral) style, "rough" is highlighted
+ * in red to signal the less strict matching. */
+function updateMatchModeBtn() {
+  els.matchModeBtn.textContent = ts(
+    exactMatch ? "history.matchExact" : "history.matchRough",
+  );
+  els.matchModeBtn.title = ts(
+    exactMatch ? "history.matchExactTitle" : "history.matchRoughTitle",
+  );
+  els.matchModeBtn.classList.toggle("active", !exactMatch);
+}
+
+// Toggle between exact (date+time must match) and rough (episode finished?)
+// matching. Only affects the display/selection – the resolution already
+// delivers both the episode status and the exact-date match.
+els.matchModeBtn.addEventListener("click", () => {
+  exactMatch = !exactMatch;
+  updateMatchModeBtn();
+  // Rows that are now "already recorded" must not stay selected.
+  for (const it of allItems) {
+    if (isTransferred(it)) it.selected = false;
+  }
+  render();
+});
 
 /** Clears the currently shown history so a stale list doesn't linger while a
  * new load runs. Shows `loadingText` as the only list hint; when `showCancel`
@@ -937,6 +1036,7 @@ async function initHistory() {
     : "en";
   await applyLanguage(locale);
   updateOrderBtn();
+  updateMatchModeBtn();
   load();
 }
 
