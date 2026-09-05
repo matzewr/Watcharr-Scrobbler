@@ -24,6 +24,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { deflateRawSync } from "node:zlib";
@@ -82,6 +83,25 @@ function copyTree(src, dest, exclude, rel = "") {
       copyTree(from, to, exclude, relPath);
     } else {
       copyFileSync(from, to);
+    }
+  }
+}
+
+/**
+ * Removes leftover store packages of previous versions from the project root
+ * (e.g. an old watcharr-scrobbler-firefox-1.1.xpi next to the freshly built
+ * 1.2 one), so that after a build only the packages of the current version
+ * exist. Called per browser kind BEFORE the new package is written – stale
+ * packages from the root would otherwise be copied into the dist tree (only
+ * the current file name is excluded there) and end up nested inside the new
+ * package.
+ */
+function cleanupOldPackages(browser, extension) {
+  const prefix = `${baseName}-${browser}-`;
+  for (const entry of readdirSync(root)) {
+    if (entry.startsWith(prefix) && entry.endsWith(`.${extension}`)) {
+      console.log(`  entferne altes Paket: ${entry}`);
+      unlinkSync(join(root, entry));
     }
   }
 }
@@ -297,6 +317,7 @@ const results = [];
 let firefoxXpi = null;
 let chromeZip = null;
 if (target === "firefox" || target === "all") {
+  cleanupOldPackages("firefox", "xpi");
   const out = buildFirefox();
   results.push(["Firefox", out]);
   // Installable .xpi at the project root – its content equals dist/firefox.
@@ -305,6 +326,7 @@ if (target === "firefox" || target === "all") {
   firefoxXpi = writePackage(out, root, FIREFOX_XPI);
 }
 if (target === "chrome" || target === "all") {
+  cleanupOldPackages("chrome", "zip");
   const out = buildChrome();
   results.push(["Chrome", out]);
   // Ready-to-upload Chrome Web Store package at the project root – its content
