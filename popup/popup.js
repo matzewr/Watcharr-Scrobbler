@@ -17,13 +17,14 @@ let currentLanguage = I18NApi.resolveLanguage("en");
 const els = {
   connStatus: $("#connStatus"),
   nowPlaying: $("#nowPlaying"),
+  nowPlayingLabel: $("#nowPlayingLabel"),
   npType: $("#npType"),
   npTitle: $("#npTitle"),
   npEpisode: $("#npEpisode"),
   npBar: $("#npBar"),
   npProgress: $("#npProgress"),
   npStatus: $("#npStatus"),
-  noNetflix: $("#noNetflix"),
+  noService: $("#noService"),
   notConfigured: $("#notConfigured"),
   enabled: $("#enabled"),
   enabledLabel: $("#enabledLabel"),
@@ -82,7 +83,7 @@ async function refresh() {
 
   if (!s.configured) {
     els.nowPlaying.classList.add("hidden");
-    els.noNetflix.classList.add("hidden");
+    els.noService.classList.add("hidden");
     els.notConfigured.classList.remove("hidden");
     els.foot.textContent = await t("toolbar.openSettings");
     return;
@@ -91,8 +92,11 @@ async function refresh() {
   const tab = (
     await browser.tabs.query({ active: true, currentWindow: true })
   )[0];
+  // Which supported streaming service (if any) is open in the active tab?
+  const svc =
+    tab && window.WatcharrServices ? WatcharrServices.byUrl(tab.url) : null;
   let item = null;
-  if (tab && tab.url && /netflix\.com/.test(tab.url)) {
+  if (svc) {
     try {
       item = await browser.tabs.sendMessage(tab.id, {
         type: "watcharr:getCurrentItem",
@@ -106,7 +110,10 @@ async function refresh() {
 
   if (item && item.videoId) {
     els.nowPlaying.classList.remove("hidden");
-    els.noNetflix.classList.add("hidden");
+    els.nowPlayingLabel.textContent = await t("popup.nowPlaying", {
+      service: svc ? svc.name : "",
+    });
+    els.noService.classList.add("hidden");
 
     els.npTitle.textContent = item.title || (await t("popup.unknownTitle"));
     els.npType.textContent =
@@ -176,8 +183,9 @@ async function refresh() {
           });
   } else {
     els.nowPlaying.classList.add("hidden");
-    els.noNetflix.classList.remove("hidden");
-    els.foot.textContent = await t("toolbar.openNetflix");
+    els.nowPlayingLabel.textContent = "";
+    els.noService.classList.remove("hidden");
+    els.foot.textContent = await t("toolbar.openService");
   }
 }
 

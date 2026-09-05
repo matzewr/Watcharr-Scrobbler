@@ -13,6 +13,7 @@
 
 importScripts(
   "../lib/browser-polyfill.min.js",
+  "services.js",
   "watcharr-client.js",
   "history.js",
   "background.js",

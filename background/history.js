@@ -1,36 +1,37 @@
 /*
  * History Workspace (Background).
  *
- * Loads the Netflix history through the Content Script, builds a
- * comparison list "Netflix ↔ Watcharr" from it (with TMDB resolution via
- * Watcharr search), allows correcting individual matches, and imports
- * selected titles into Watcharr.
+ * Loads the viewing history of the currently selected service (Netflix /
+ * Amazon Prime Video) through its Content Script, builds a comparison list
+ * "Service ↔ Watcharr" from it (with TMDB resolution via Watcharr search),
+ * allows correcting individual matches, and imports selected titles into
+ * Watcharr.
  *
  * Loaded as a classic script BEFORE background.js and provides the
  * global `WatcharrHistory` object (uses `WatcharrClient` from
- * watcharr-client.js).
+ * watcharr-client.js and the service registry from services.js).
  */
 "use strict";
 
 const WatcharrHistory = (() => {
-  // Incremental loading: EVERY Netflix view is a separate
-  // entry (NO grouping by series). BATCH_SIZE elements are always fetched
-  // from Netflix, matched, and then displayed on the page.
+  // Incremental loading: EVERY view of the service is a separate entry (NO
+  // grouping by series). BATCH_SIZE elements are always fetched from the
+  // service, matched, and then displayed on the page.
   const BATCH_SIZE = 20;
-  // Safety cap for "oldest first" mode: Netflix normally ends with an empty
-  // page much earlier – this only guards against an endless loop.
+  // Safety cap for "oldest first" mode: the services normally end with an
+  // empty page much earlier – this only guards against an endless loop.
   const MAX_HISTORY_PAGES = 500;
 
-  let items = []; // all entries loaded so far (1 Netflix view = 1 row)
+  let items = []; // all entries loaded so far (1 service view = 1 row)
   const itemMap = new Map(); // lookup for fast item.key -> item; important for larger histories
-  let page = 0; // next Netflix page to load
+  let page = 0; // next service page to load
   let total = 0; // number of entries loaded so far
-  let done = false; // complete Netflix history loaded?
+  let done = false; // complete service history loaded?
   let loading = false; // currently loading a batch?
   let loadError = null; // last error when loading
   let seq = 0; // sequential key for stable item keys
-  // Session display order: show the history OLDEST first? Netflix returns the
-  // newest entry first (page 0 = top of the list), so this mode loads the
+  // Session display order: show the history OLDEST first? The services return
+  // the newest entry first (page 0 = top of the list), so this mode loads the
   // COMPLETE history once and serves it to the UI starting with the oldest
   // entry (oldest at the very top).
   let oldestFirst = false;
@@ -40,6 +41,13 @@ const WatcharrHistory = (() => {
   // Set while a (long) "oldest first" full-history load is running so that
   // the user can abort it via the button on the history page.
   let cancelRequested = false;
+
+  // Service whose history is currently being loaded (id from WatcharrServices).
+  let serviceId = "netflix";
+  // Identifies one fresh history load. It is passed to the content scripts so
+  // that paged services (Amazon Prime Video) can reset their internal history
+  // buffer when a new load starts. Netflix ignores it.
+  let historyLoadId = 0;
 
   function refreshItemMap() {
     itemMap.clear();
@@ -61,23 +69,29 @@ const WatcharrHistory = (() => {
     oldestFirst = !!v;
   }
 
+  /** Selects the service whose history is loaded (id from WatcharrServices). */
+  function setService(id) {
+    if (WatcharrServices.byId(id)) serviceId = id;
+  }
+
   /** Requests that a running "oldest first" full-history load be aborted. */
   function cancelHistoryLoad() {
     cancelRequested = true;
   }
 
   /**
-   * Finds a Netflix tab where the Content Script is running. If no
-   * Content Script is reachable in any tab (e.g., because the tab was already open
-   * when the extension was loaded), it is injected afterwards via
-   * browser.scripting. Returns the tab ID or throws an error.
+   * Finds a tab of the current service where the Content Script is running.
+   * If no Content Script is reachable in any tab (e.g., because the tab was
+   * already open when the extension was loaded), it is injected afterwards
+   * via browser.scripting. Returns the tab ID or throws an error.
    */
-  async function ensureNetflixTab() {
-    log("ensureNetflixTab: searching for open Netflix tabs …");
-    const tabs = await browser.tabs.query({ url: "*://*.netflix.com/*" });
+  async function ensureServiceTab() {
+    const svc = WatcharrServices.byId(serviceId) || WatcharrServices.list[0];
+    log("ensureServiceTab: searching for open", svc.name, "tabs …");
+    const tabs = await browser.tabs.query({ url: svc.urlPattern });
     const candidates = tabs.filter((t) => t.id != null);
     log(
-      "ensureNetflixTab: tabs found:",
+      "ensureServiceTab: tabs found:",
       tabs.length,
       "| with id:",
       candidates.length,
@@ -85,16 +99,16 @@ const WatcharrHistory = (() => {
       candidates.map((t) => t.id + ":" + (t.url || "?")).join(", "),
     );
     if (!candidates.length) {
-      logErr("ensureNetflixTab: no open Netflix tab found");
+      logErr("ensureServiceTab: no open", svc.name, "tab found");
       throw new Error(
-        "No open Netflix tab found. Open Netflix in Firefox and log in.",
+        "No open " + svc.name + " tab found. Open " + svc.name + " and log in.",
       );
     }
 
     for (const tab of candidates) {
       try {
         await browser.tabs.sendMessage(tab.id, { type: "watcharr:ping" });
-        log("ensureNetflixTab: Content Script running in tab", tab.id);
+        log("ensureServiceTab: Content Script running in tab", tab.id);
         return tab.id;
       } catch (e) {
         // No Content Script in this tab -> try next tab.
@@ -104,50 +118,59 @@ const WatcharrHistory = (() => {
     // No tab with running Content Script: inject afterwards.
     const www =
       candidates.find((t) =>
-        /^https?:\/\/([^/]*\.)?netflix\.com\//.test(t.url || ""),
+        svc.urlTest.test(WatcharrServices.host(t.url || "")),
       ) || candidates[0];
     log(
-      "ensureNetflixTab: injecting Content Script in tab",
+      "ensureServiceTab: injecting Content Script in tab",
       www.id,
       www.url || "",
     );
     try {
       await browser.scripting.executeScript({
         target: { tabId: www.id },
-        files: [
-          "content/netflix/netflix-inject.js",
-          "content/netflix/netflix-content.js",
-        ],
+        files: svc.contentScripts,
       });
     } catch (e) {
-      logErr("ensureNetflixTab: Injection failed:", e.message);
+      logErr("ensureServiceTab: Injection failed:", e.message);
       throw new Error(
-        "Netflix tab could not be prepared. Please reload the Netflix page and try again. (" +
+        svc.name +
+          " tab could not be prepared. Please reload the " +
+          svc.name +
+          " page and try again. (" +
           (e.message || String(e)) +
           ")",
       );
     }
-    // Wait briefly until the probe in the MAIN world has been initialised.
+    // Wait briefly so that injected scripts (and, for Netflix, the probe in
+    // the MAIN world) have initialised.
     await new Promise((r) => setTimeout(r, 800));
     return www.id;
   }
 
-  /** Fetches a single page of the Netflix history through the Content Script. */
-  async function netflixPage(pageIndex) {
-    const tabId = await ensureNetflixTab();
-    log("netflixPage: fetching Netflix page", pageIndex, "from tab", tabId);
+  /** Fetches a single page of the service history through the Content Script. */
+  async function historyPage(pageIndex) {
+    const tabId = await ensureServiceTab();
+    log(
+      "historyPage: fetching",
+      serviceId,
+      "page",
+      pageIndex,
+      "from tab",
+      tabId,
+    );
     const resp = await browser.tabs.sendMessage(tabId, {
       type: "watcharr:fetchHistoryPage",
       page: pageIndex,
+      loadId: historyLoadId,
     });
     if (!resp || resp.status !== "ok") {
       throw new Error(
-        (resp && resp.error) || "No response from Netflix tab received.",
+        (resp && resp.error) || "No response from the service tab received.",
       );
     }
     const entries = resp.entries || [];
     log(
-      "netflixPage: page",
+      "historyPage: page",
       pageIndex,
       "->",
       entries.length,
@@ -386,11 +409,11 @@ const WatcharrHistory = (() => {
 
   /**
    * Starts a fresh history load: loads the FIRST BATCH_SIZE entries
-   * from Netflix, resolves their matches and returns them immediately.
-   * Further entries come later via `more()` when scrolling.
+   * from the selected service, resolves their matches and returns them
+   * immediately. Further entries come later via `more()` when scrolling.
    */
   async function load() {
-    log("load: starting history load");
+    log("load: starting history load for", serviceId);
     const s = await getSettings();
     if (!s.watcharrUrl || !s.token) {
       logErr(
@@ -417,6 +440,9 @@ const WatcharrHistory = (() => {
     delivered = 0;
     cancelRequested = false;
     watchedEpisodesCache.clear();
+    // New load -> new loadId so paged content scripts (Amazon Prime Video)
+    // know that a fresh history starts and reset their internal buffer.
+    historyLoadId++;
 
     const res = oldestFirst
       ? await loadEntireHistory()
@@ -430,14 +456,14 @@ const WatcharrHistory = (() => {
     };
   }
 
-  /** Loads the next BATCH from Netflix, resolves the matches, returns it. */
+  /** Loads the next BATCH from the service, resolves the matches, returns it. */
   async function fetchMore(limit) {
     if (loading || done) return { items: [], total, done };
     loading = true;
     loadError = null;
-    log("fetchMore: loading Netflix page", page);
+    log("fetchMore: loading", serviceId, "page", page);
     try {
-      const { entries, done: d } = await netflixPage(page);
+      const { entries, done: d } = await historyPage(page);
       if (d) {
         done = true;
         log("fetchMore: last page reached, total", total, "entries");
@@ -458,21 +484,21 @@ const WatcharrHistory = (() => {
   }
 
   /**
-   * Oldest-first mode: loads the COMPLETE Netflix history (every page), then
-   * hands it to the UI starting with the oldest entry. Netflix metadata
-   * enrichment happens per page in the Content Script; the Watcharr match
-   * lookup is done lazily per delivered chunk (same amount of requests as in
-   * the normal incremental mode – just when the rows are actually shown).
+   * Oldest-first mode: loads the COMPLETE history of the selected service
+   * (every page), then hands it to the UI starting with the oldest entry.
+   * Metadata enrichment happens per page in the Content Script; the Watcharr
+   * match lookup is done lazily per delivered chunk (same amount of requests
+   * as in the normal incremental mode – just when the rows are actually shown).
    */
   async function loadEntireHistory() {
     if (loading) return { items: [], total, done };
     loading = true;
     loadError = null;
     try {
-      log("loadEntireHistory: loading complete Netflix history …");
+      log("loadEntireHistory: loading complete", serviceId, "history …");
       let pages = 0;
       while (!done && pages < MAX_HISTORY_PAGES && !cancelRequested) {
-        const { entries, done: d } = await netflixPage(page);
+        const { entries, done: d } = await historyPage(page);
         if (cancelRequested) break; // user aborted while the page was fetched
         if (d || !entries.length) {
           done = true;
@@ -490,8 +516,8 @@ const WatcharrHistory = (() => {
         log("loadEntireHistory: aborted by user");
         return { cancelled: true, items: [], total, done: false };
       }
-      // Netflix page 0 = newest entry, so `items` is newest -> oldest right
-      // now. Flip it: items[0] = OLDEST entry -> the UI gets oldest first.
+      // Page 0 = newest entry, so `items` is newest -> oldest right now.
+      // Flip it: items[0] = OLDEST entry -> the UI gets oldest first.
       items.reverse();
       total = items.length;
       log(
@@ -799,6 +825,7 @@ const WatcharrHistory = (() => {
     rematch,
     importItems,
     setOldestFirst,
+    setService,
     cancelHistoryLoad,
     getLoadProgress,
   };

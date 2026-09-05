@@ -143,22 +143,23 @@ function buildChrome() {
     injectPolyfillIntoHtml(join(out, page));
   }
 
-  // --- dynamic content-script injection (history.js) ---------------
-  // When a Netflix tab was already open and the content script is injected
-  // on demand, the polyfill must be injected first as well.
-  const historyJs = join(out, "background/history.js");
-  let hjs = readFileSync(historyJs, "utf8");
-  const anchor = 'files: [\n          "content/netflix/netflix-inject.js",';
-  if (!hjs.includes(anchor)) {
+  // --- dynamic content-script injection (background/services.js) --------
+  // The content scripts that are injected on demand (into tabs opened before
+  // the extension was loaded) are listed per service in the `contentScripts`
+  // arrays of background/services.js. In the Chrome build the `browser.*`
+  // polyfill must run first in every one of those lists as well.
+  const servicesJs = join(out, "background/services.js");
+  let sjs = readFileSync(servicesJs, "utf8");
+  const newSjs = sjs.replace(
+    /(contentScripts:\s*\[)(\s*\n\s*)/g,
+    '$1$2"lib/browser-polyfill.min.js",$2',
+  );
+  if (newSjs === sjs) {
     throw new Error(
-      "Cannot inject polyfill into background/history.js: anchor not found.",
+      "Cannot inject polyfill into background/services.js: contentScripts arrays not found.",
     );
   }
-  hjs = hjs.replace(
-    anchor,
-    'files: [\n          "lib/browser-polyfill.min.js",\n          "content/netflix/netflix-inject.js",',
-  );
-  writeFileSync(historyJs, hjs);
+  writeFileSync(servicesJs, newSjs);
 
   return out;
 }

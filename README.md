@@ -4,20 +4,23 @@ A browser extension (Firefox and Chrome) that works like the
 [Universal Trakt Scrobbler](https://github.com/trakt-tools/universal-trakt-scrobbler) –
 but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watcharr)-instance**.
 
-**Current status:** Only **Netflix** is integrated as a service. Amazon Prime is planned.
+**Current status:** **Netflix** and **Amazon Prime Video** are integrated as services.
 
 <br>
 
 ## What it does
 
-- Automatically detects what is currently playing on Netflix (movie or series, including season & episode).
+- Automatically detects what is currently playing on Netflix or Amazon Prime
+  Video (movie or series, including season & episode).
 - Searches for the title via your Watcharr instance (TMDB search) and adds it to your watchlist.
 - While you are watching, the entry remains **WATCHING**.
 - Once a movie or episode reaches the configurable threshold,
   it is marked as watched in Watcharr (**FINISHED**).
 - For series, the individual **episode** is marked as watched – Watcharr
   automatically updates the series status (“Automate Show Statuses”).
-- **History page:** Import your previous Netflix viewing history in a controlled way – with comparison, match correction, and selective import (movies as watched series episodes individually).
+- **History page:** Import your previous viewing history (Netflix or Amazon
+  Prime Video) in a controlled way – with comparison, match correction, and
+  selective import (movies as watched series episodes individually).
 
 <br>
 
@@ -42,19 +45,21 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
      asks the server via `GET /api/auth/available`). Jellyfin uses username &
      password, Plex opens a plex.tv popup for the OAuth login.
 4. Optional: Adjust the scrobbling threshold (e.g. 90% if only the ending should count).
-5. Open Netflix and get started 🍿
+5. Open Netflix or Amazon Prime Video and get started 🍿
 
 You can see the status and progress at any time in the **Popup**.
 
 <br>
 
-## Netflix History
+## History import
 
-The **History page** (Popup → **“Netflix History”**) gives you full
+The **History page** (Popup → **“History”**) gives you full
 Control similar to Universal Trakt Scrobbler: a **side-by-side comparison** of each
-Netflix title with the automatically found **Watcharr match**, including
-**match correction** and **selective import**. No separate synchronization is
-required – the page loads the history directly from the open Netflix tab.
+watched title (Netflix or Amazon Prime Video – the service is selected
+automatically from the open tab) with the automatically found **Watcharr match**,
+including **match correction** and **selective import**. No separate
+synchronization is required – the page loads the history directly from the open
+service tab.
 
 <br>
 

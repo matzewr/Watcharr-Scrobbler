@@ -254,9 +254,10 @@ async function handleMessage(msg, sender) {
         ),
       );
 
-    // -- History page (Comparison Netflix ↔ Watcharr) ---------------
+    // -- History page (Comparison Service ↔ Watcharr) ---------------
     case "watcharr:history:load":
       try {
+        WatcharrHistory.setService(msg.service);
         WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.load();
         return {
@@ -272,6 +273,7 @@ async function handleMessage(msg, sender) {
 
     case "watcharr:history:more":
       try {
+        WatcharrHistory.setService(msg.service);
         WatcharrHistory.setOldestFirst(msg.oldestFirst === true);
         const data = await WatcharrHistory.more();
         return {
@@ -309,6 +311,28 @@ async function handleMessage(msg, sender) {
     case "watcharr:history:progress":
       // Entries fetched so far while the "oldest first" full load is running.
       return { ok: true, loaded: WatcharrHistory.getLoadProgress() };
+
+    // Amazon Prime Video history API calls. They are routed through the
+    // background because the content script's own fetch is bound by the page's
+    // CORS (the Amazon API hosts are cross-origin to primevideo.com and would
+    // otherwise fail with "NetworkError"). The background fetch is not subject
+    // to that CORS and – thanks to the <all_urls> host permission – sends the
+    // user's Prime Video session cookies.
+    case "watcharr:primevideo:api": {
+      try {
+        const resp = await fetch(msg.url || "", {
+          method: "GET",
+          credentials: "include",
+          headers: { "x-requested-with": "XMLHttpRequest" },
+        });
+        if (!resp.ok) {
+          return { ok: false, status: resp.status };
+        }
+        return { ok: true, text: await resp.text() };
+      } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+      }
+    }
 
     default:
       return { ok: false, error: "Unknown message type: " + (msg && msg.type) };

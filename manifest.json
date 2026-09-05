@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Watcharr Scrobbler — Netflix",
+  "name": "Watcharr Scrobbler",
   "version": "1.1",
-  "description": "Automatically scrobbles what you watch on Netflix into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
+  "description": "Automatically scrobbles what you watch on Netflix and Amazon Prime Video into your self-hosted Watcharr instance (like Universal Trakt Scrobbler, only for Watcharr).",
   "browser_specific_settings": {
     "gecko": {
       "id": "watcharr-scrobbler@mattw",
@@ -16,6 +16,7 @@
   "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": [
+      "background/services.js",
       "background/watcharr-client.js",
       "background/history.js",
       "background/background.js"
@@ -29,6 +30,11 @@
         "content/netflix/netflix-content.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["*://www.primevideo.com/*"],
+      "js": ["content/primevideo/primevideo-content.js"],
+      "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [

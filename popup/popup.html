@@ -17,7 +17,7 @@
 
     <section id="nowPlaying" class="card hidden">
       <div class="np-head">
-        <span class="label" data-i18n="popup.nowPlaying">Now on Netflix</span>
+        <span id="nowPlayingLabel" class="label">Now on …</span>
         <span id="npType" class="chip">Movie</span>
       </div>
       <div id="npTitle" class="np-title">—</div>
@@ -31,13 +31,9 @@
       </div>
     </section>
 
-    <section
-      id="noNetflix"
-      class="card muted hidden"
-      data-i18n="popup.noNetflix"
-    >
-      Open Netflix and start a movie or series – the popup will then show the
-      progress.
+    <section id="noService" class="card muted hidden" data-i18n="popup.noService">
+      Open Netflix or Amazon Prime Video and start a movie or series – the
+      popup will then show the progress.
     </section>
 
     <section id="notConfigured" class="card warn hidden">
@@ -62,8 +58,12 @@
     </div>
 
     <section class="sync">
-      <button id="historyBtn" class="ghost block" data-i18n="popup.openHistory">
-        Netflix history
+      <button
+        id="historyBtn"
+        class="ghost block"
+        data-i18n="popup.openHistory"
+      >
+        History
       </button>
     </section>
 
@@ -72,6 +72,7 @@
     <script src="../i18n/locale.js"></script>
     <script src="../i18n/formatters.js"></script>
     <script src="../i18n/index.js"></script>
+    <script src="../background/services.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

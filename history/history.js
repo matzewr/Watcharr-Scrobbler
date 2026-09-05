@@ -1,9 +1,10 @@
 /*
  * Watcharr Scrobbler – History page.
  *
- * Shows the Netflix history as a comparison "Netflix ↔ Watcharr",
- * allows correcting the matches (search in Watcharr) and selective
- * import of selected titles.
+ * Shows the viewing history of the selected streaming service (Netflix /
+ * Amazon Prime Video) as a comparison "Service ↔ Watcharr", allows
+ * correcting the matches (search in Watcharr) and selective import of
+ * selected titles.
  */
 "use strict";
 
@@ -48,8 +49,17 @@ const els = {
   confirmModal: $("#confirmModal"),
   orderOkBtn: $("#orderOkBtn"),
   orderCancelBtn: $("#orderCancelBtn"),
+  serviceBtn: $("#serviceBtn"),
+  pageTitle: $("#pageTitle"),
+  pageSubtitle: $("#pageSubtitle"),
   list: $("#list"),
 };
+
+// Service whose history is currently shown (id from WatcharrServices).
+let serviceId = "netflix";
+let serviceAvailable = false;
+// Services with an open tab (the header toggle switches between them).
+let availableServices = [];
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 
@@ -577,6 +587,7 @@ async function load() {
     const resp = await browser.runtime.sendMessage({
       type: "watcharr:history:load",
       oldestFirst,
+      service: serviceId,
     });
     if (gen !== loadGen) return; // superseded – a newer load owns the state
     if (resp && resp.cancelled) {
@@ -636,6 +647,7 @@ async function loadMore() {
     const resp = await browser.runtime.sendMessage({
       type: "watcharr:history:more",
       oldestFirst,
+      service: serviceId,
     });
     if (!resp || !resp.ok)
       throw new Error(
@@ -1030,13 +1042,213 @@ window.addEventListener("scroll", () => {
   }
 });
 
+/** Sets the header title/subtitle to the selected service. */
+async function applyServiceHeader() {
+  const svc = WatcharrServices.byId(serviceId);
+  const name = svc ? svc.name : "";
+  if (els.pageTitle)
+    els.pageTitle.textContent = await t("history.pageTitle", {
+      service: name,
+    });
+  if (els.pageSubtitle)
+    els.pageSubtitle.textContent = await t("history.pageSubtitle", {
+      service: name,
+    });
+}
+
+/**
+ * Renders the provider button in the header: it always shows the service
+ * whose history is currently displayed. When more than one service has an
+ * open tab it becomes a toggle (click switches to the other provider).
+ */
+function renderServiceToggle(available) {
+  availableServices = available || [];
+  const btn = els.serviceBtn;
+  if (!btn) return;
+  const svc = WatcharrServices.byId(serviceId);
+  if (!svc || !serviceAvailable || availableServices.length === 0) {
+    btn.classList.add("hidden");
+    return;
+  }
+  btn.classList.remove("hidden");
+  btn.textContent = svc.name;
+  const toggleable = availableServices.length > 1;
+  btn.classList.toggle("toggleable", toggleable);
+  if (toggleable) {
+    const target = availableServices.find((s) => s.id !== serviceId);
+    btn.title = ts("history.switchProviderTitle", {
+      service: svc.name,
+      target: target ? target.name : "",
+    });
+  } else {
+    btn.title = ts("history.pageTitle", { service: svc.name });
+  }
+}
+
+/**
+ * Determines which services have an open, usable tab and which one should be
+ * selected: the currently focused service tab wins, otherwise the first
+ * service that has an open tab.
+ */
+async function detectServices() {
+  const available = [];
+  for (const svc of WatcharrServices.list) {
+    if (svc.hasHistory === false) continue;
+    try {
+      const tabs = await browser.tabs.query({ url: svc.urlPattern });
+      if (tabs.some((t) => t.id != null)) available.push(svc);
+    } catch (_) {
+      /* ignore – no permission for this pattern */
+    }
+  }
+  let preferred = null;
+  try {
+    const active = (
+      await browser.tabs.query({ active: true, currentWindow: true })
+    )[0];
+    const activeSvc = active && WatcharrServices.byUrl(active.url);
+    if (activeSvc) preferred = activeSvc;
+  } catch (_) {
+    /* ignore */
+  }
+  const chosen =
+    preferred && available.some((s) => s.id === preferred.id)
+      ? preferred
+      : available[0] || null;
+  return { available, chosen };
+}
+
+/** No service tab is open – the history cannot be loaded. */
+async function showNoService() {
+  const names = WatcharrServices.list
+    .filter((s) => s.hasHistory !== false)
+    .map((s) => s.name)
+    .join(" / ");
+  const msg = await t("history.noServiceTab", { services: names });
+  setStatus("error", msg);
+  replaceFromHtml(
+    els.list,
+    '<div class="list-hint">' + escapeHtml(msg) + "</div>",
+  );
+  updateImportButton();
+}
+
+/** Switches the history provider and reloads it (used by the toggle button). */
+async function switchProvider(id) {
+  serviceId = id;
+  serviceAvailable = true;
+  applyServiceHeader();
+  renderServiceToggle(availableServices);
+  // A different service = a completely different history.
+  oldestFirst = false;
+  updateOrderBtn();
+  load();
+}
+
+/**
+ * Re-checks which service tabs are open and reconciles the header toggle:
+ *  - no service tab open at all               -> toggle is hidden,
+ *  - the current provider's tab is gone, but another provider is open
+ *    -> switch to it (and reload, unless an "oldest first" load is running),
+ *  - otherwise only the toggle state is refreshed (e.g. a second provider's
+ *    tab opened/closed -> becomes/ceases to be a toggle).
+ */
+async function refreshProviders() {
+  const { available, chosen } = await detectServices();
+  availableServices = available;
+  const hadService = serviceAvailable;
+
+  if (!chosen) {
+    // No service tab is open – hide the toggle (keep the current view).
+    renderServiceToggle(available);
+    return;
+  }
+
+  const currentOpen = available.some((s) => s.id === serviceId);
+  if (!serviceAvailable || !currentOpen) {
+    // First detection or the current provider's tab was closed.
+    serviceId = chosen.id;
+    serviceAvailable = true;
+    await applyServiceHeader();
+    renderServiceToggle(available);
+    if (hadService && !loadingInitial) {
+      // Switch to the other provider and load its history.
+      oldestFirst = false;
+      updateOrderBtn();
+      load();
+    }
+    return;
+  }
+
+  // Provider unchanged – just keep the toggle in sync with the open tabs.
+  renderServiceToggle(available);
+}
+
+let providerRefreshTimer = null;
+
+/** Debounced provider re-check – bursts of tab events trigger one run. */
+function scheduleProviderRefresh() {
+  if (providerRefreshTimer) clearTimeout(providerRefreshTimer);
+  providerRefreshTimer = setTimeout(() => {
+    providerRefreshTimer = null;
+    refreshProviders();
+  }, 400);
+}
+
+/**
+ * Reacts to tab events so the toggle updates immediately when a tab is
+ * opened/closed/navigated:
+ *   - tabs.onCreated / onRemoved -> a service tab appeared or disappeared,
+ *   - tabs.onActivated           -> the active tab changed,
+ *   - tabs.onUpdated (url/complete) -> a tab navigated to/away from a service.
+ */
+function bindTabEvents() {
+  try {
+    browser.tabs.onCreated.addListener(scheduleProviderRefresh);
+    browser.tabs.onRemoved.addListener(scheduleProviderRefresh);
+    browser.tabs.onActivated.addListener(scheduleProviderRefresh);
+    browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      // React when a tab finished loading or its URL changed; plain loading
+      // status updates would be too noisy.
+      if (changeInfo && (changeInfo.url || changeInfo.status === "complete")) {
+        scheduleProviderRefresh();
+      }
+    });
+  } catch (_) {
+    /* tabs events not available in this context */
+  }
+}
+
 async function initHistory() {
   const locale = window.watcharrI18nLocale
     ? await window.watcharrI18nLocale.fetchLocale()
     : "en";
   await applyLanguage(locale);
+
   updateOrderBtn();
   updateMatchModeBtn();
+
+  // Header provider button: with a second service available it toggles
+  // between the providers (otherwise it only shows the current one).
+  if (els.serviceBtn) {
+    els.serviceBtn.addEventListener("click", () => {
+      if (availableServices.length < 2) return; // nothing to switch to
+      const next = availableServices.find((s) => s.id !== serviceId);
+      if (!next) return;
+      switchProvider(next.id);
+    });
+  }
+
+  // Keep the provider toggle in sync with the open tabs (event-driven).
+  bindTabEvents();
+
+  await refreshProviders();
+  await applyServiceHeader();
+
+  if (!serviceAvailable) {
+    await showNoService();
+    return;
+  }
   load();
 }
 

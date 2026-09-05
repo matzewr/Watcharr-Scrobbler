@@ -11,11 +11,15 @@
       <div class="brand">
         <img class="logo" src="../icons/icon-48.png" alt="Logo" />
         <div>
-          <h1 data-i18n="history.pageTitle">Netflix history</h1>
-          <p class="sub" data-i18n="history.pageSubtitle">
-            Netflix ↔ Watcharr comparison
-          </p>
+          <h1 id="pageTitle" class="page-title">History</h1>
+          <p id="pageSubtitle" class="sub">Service ↔ Watcharr comparison</p>
         </div>
+        <button
+          id="serviceBtn"
+          class="service-btn hidden"
+          type="button"
+          aria-live="polite"
+        ></button>
       </div>
       <div class="actions">
         <button id="orderBtn" class="ghost" type="button">Newest first</button>
@@ -78,8 +82,8 @@
           Switch to oldest first?
         </h2>
         <p class="modal-text" data-i18n="history.orderConfirmText">
-          To list the oldest entries at the top, the complete Netflix history is
-          loaded once and sorted oldest → newest.
+          To list the oldest entries at the top, the complete viewing history
+          is loaded once and sorted oldest → newest.
         </p>
         <div class="modal-actions">
           <button id="orderCancelBtn" class="ghost" data-i18n="history.cancel">
@@ -99,6 +103,7 @@
     <script src="../i18n/locale.js"></script>
     <script src="../i18n/formatters.js"></script>
     <script src="../i18n/index.js"></script>
+    <script src="../background/services.js"></script>
     <script src="history.js"></script>
   </body>
 </html>

@@ -85,6 +85,47 @@ body {
   background: var(--bg-elev-2);
 }
 
+/* Provider button in the header (next to the logo/title): shows which
+   service's history is displayed. When both services have an open tab it
+   becomes a toggle to switch between them. */
+.service-btn {
+  margin-left: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.service-btn::after {
+  content: "⇄";
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.service-btn.toggleable {
+  cursor: pointer;
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.service-btn.toggleable:hover {
+  background: var(--bg-elev);
+}
+
+.service-btn.toggleable::after {
+  opacity: 1;
+}
+
 .actions {
   display: flex;
   align-items: center;
