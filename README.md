@@ -30,6 +30,27 @@ but **only for your own, self-hosted [Watcharr](https://github.com/sbondCo/Watch
 > self-hosted URL, the extension requires a very broad
 > host permission. This is intentional.
 
+**Firefox**
+
+- **Firefox Add-ons (AMO):** The add-on is available in the
+  [Firefox Add-ons Store](https://addons.mozilla.org/de/firefox/addon/watcharr-scrobbler/) – this is the
+  recommended way to install it.
+- **Manual (`.xpi`):** Alternatively, you can install the `.xpi` file attached
+  to the respective [GitHub Release](https://github.com/matzewr/Watcharr-Scrobbler/releases)
+  (the `.xpi` is uploaded to each release as soon as it has been signed by
+  Mozilla). To install it manually, open `about:addons` in Firefox, click the
+  gear icon and choose **“Install Add-on From File…**”.
+
+**Chrome**
+
+- The add-on is **not yet available** in the Chrome Web Store. If there is
+  interest, it will also be uploaded to the Chrome Web Store.
+- **In the meantime:** You can build a current, ready-to-use version yourself.
+  Run `npm run build` – this creates the unpacked extension in `dist/chrome/`
+  (to build only Chrome, use `npm run build:chrome`). Then open
+  `chrome://extensions`, enable **Developer mode** and click
+  **“Load unpacked”**, selecting the `dist/chrome` folder.
+
 <br>
 
 ## Setup
@@ -66,11 +87,12 @@ service tab.
 ## Troubleshooting
 
 > **Note:** The Watcharr API can currently only import exact viewing dates for
-> movies/series (not per episode). The history is therefore transferred correctly
-> in terms of what was watched.
+> movies/series (not per episode). The history is therefore transferred
+> correctly in terms of what was watched. In the meantime, you shouldn't use
+> the exact match Mode.
 
 <br>
 
 ## AI Disclosure
 
-> **AI-generated:** This project was created entirely by AI. I haven’t yet had time to review the code in detail myself. A thorough personal review is planned. However, the extension currently appears to be working without any errors.
+> **AI-generated:** This project was created entirely by AI. I haven’t had time yet to review the code in detail myself. A thorough personal review is planned. However, the extension currently appears to be working without any errors.
