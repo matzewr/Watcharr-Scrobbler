@@ -197,31 +197,6 @@ class WatcharrClient {
     return this._request("GET", "/content/tv/" + Number(tmdbId));
   }
 
-  /**
-   * Import with exact data (POST /api/import).
-   * Watcharr sets the "date added" (CreatedAt/UpdatedAt) to watchedDate
-   * for `datesWatched` and creates episodes with exact date (createdAt).
-   * Returns the raw ImportResponse: { type, watchedEntry }.
-   */
-  async importMedia({ tmdbId, type, status, datesWatched, watchedEpisodes }) {
-    const body = {
-      tmdbId: Number(tmdbId),
-      type, // "movie" | "tv"
-      status,
-    };
-    if (Array.isArray(datesWatched) && datesWatched.length) {
-      body.datesWatched = datesWatched;
-    }
-    if (Array.isArray(watchedEpisodes) && watchedEpisodes.length) {
-      body.watchedEpisodes = watchedEpisodes.map((e) => ({
-        seasonNumber: Number(e.seasonNumber),
-        episodeNumber: Number(e.episodeNumber),
-        status: e.status || "FINISHED",
-        ...(e.createdAt ? { createdAt: e.createdAt } : {}),
-      }));
-    }
-    return this._request("POST", "/import", body);
-  }
 }
 
 /**

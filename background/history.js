@@ -170,6 +170,17 @@ const WatcharrHistory = (() => {
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
 
+  /**
+   * Returns an ISO-8601 string that is `minutes` before the given ISO-8601
+   * string (or null if no usable date is given).
+   */
+  function subtractMinutes(iso, minutes) {
+    if (iso == null) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return new Date(d.getTime() - minutes * 60000).toISOString();
+  }
+
   /** Builds a separate list entry from a Netflix view (no grouping). */
   function entryToItem(entry) {
     return {
@@ -190,6 +201,9 @@ const WatcharrHistory = (() => {
       episodeStatus: null,
       // false = unknown (fetch failed / no episode info)
       episodeStatusKnown: false,
+      // True only when Watcharr records this exact episode as FINISHED at the
+      // same date+time as this Netflix row (activity customDate = watchedDate).
+      episodeDateMatched: false,
       selected: false,
       status: "pending",
       error: null,
@@ -237,10 +251,23 @@ const WatcharrHistory = (() => {
     };
   }
 
+  /** "season:episode" lookup key for per-episode maps. */
+  function epKey(season, episode) {
+    return Number(season) + ":" + Number(episode);
+  }
+
+  /** Whole seconds of an ISO date (tolerates server-side ms truncation). */
+  function toEpochSeconds(iso) {
+    if (iso == null) return null;
+    const t = new Date(iso).getTime();
+    return isNaN(t) ? null : Math.floor(t / 1000);
+  }
+
   /**
    * Episode status cache per TMDB ID: Many history lines belong to the same
    * series, so each series is queried only once. The value is a Promise
-   * for { ok, episodes } – so parallel resolutions share the same request.
+   * for { ok, episodes, finishedByEp } – so parallel resolutions share the
+   * same request.
    */
   const watchedEpisodesCache = new Map();
 
@@ -254,29 +281,67 @@ const WatcharrHistory = (() => {
       const w = data && data.watched;
       const raw =
         w && Array.isArray(w.watchedEpisodes) ? w.watchedEpisodes : [];
-      return {
-        ok: true,
-        episodes: raw.map((e) => ({
-          seasonNumber: Number(e.seasonNumber),
-          episodeNumber: Number(e.episodeNumber),
-          status: e.status || "FINISHED",
-        })),
-      };
+      const episodes = raw.map((e) => ({
+        seasonNumber: Number(e.seasonNumber),
+        episodeNumber: Number(e.episodeNumber),
+        status: e.status || "FINISHED",
+      }));
+      // Exact watch events per episode: FINISHED activities (EPISODE_ADDED /
+      // EPISODE_STATUS_CHANGED) whose data.status is FINISHED and whose
+      // customDate is set (= the watchedDate we passed to the API). This is
+      // the exact Netflix date+time the episode was recorded as finished.
+      const finishedByEp = new Map(); // epKey -> Set<epoch seconds>
+      const acts = w && Array.isArray(w.activity) ? w.activity : [];
+      for (const a of acts) {
+        if (
+          !a ||
+          (a.type !== "EPISODE_ADDED" &&
+            a.type !== "EPISODE_STATUS_CHANGED")
+        ) {
+          continue;
+        }
+        if (!a.customDate) continue; // only exact-dated events count
+        let d = null;
+        try {
+          d = JSON.parse(a.data || "");
+        } catch (_) {
+          continue;
+        }
+        if (!d || d.status !== "FINISHED") continue;
+        if (d.season == null || d.episode == null) continue;
+        const sec = toEpochSeconds(a.customDate);
+        if (sec == null) continue;
+        const key = epKey(d.season, d.episode);
+        if (!finishedByEp.has(key)) finishedByEp.set(key, new Set());
+        finishedByEp.get(key).add(sec);
+      }
+      return { ok: true, episodes, finishedByEp };
     })().catch((err) => {
       logErr("getWatchedEpisodes: Error for tmdbId", tmdbId, "->", err.message);
-      return { ok: false, episodes: [], error: err.message };
+      return {
+        ok: false,
+        episodes: [],
+        finishedByEp: new Map(),
+        error: err.message,
+      };
     });
     watchedEpisodesCache.set(tmdbId, p);
     return p;
   }
 
   /**
-   * Determines whether the specific episode (it.season / it.episode) of the matched series
-   * is marked as watched in Watcharr. Sets it.episodeStatus (status or
-   * null) and it.episodeStatusKnown (false = unknown).
+   * Determines whether the specific episode (it.season / it.episode) of the
+   * matched series is already recorded in Watcharr at THIS exact Netflix
+   * date+time. Sets:
+   *  - it.episodeStatus: current status of the episode (or null),
+   *  - it.episodeDateMatched: true when a FINISHED activity (EPISODE_ADDED /
+   *    EPISODE_STATUS_CHANGED, data.status = FINISHED) has a customDate equal
+   *    to the row's date+time (customDate = watchedDate when it was passed),
+   *  - it.episodeStatusKnown (false = unknown).
    */
   async function resolveItemEpisodeStatus(it) {
     it.episodeStatus = null;
+    it.episodeDateMatched = false;
     it.episodeStatusKnown = false;
     if (!(
       it.isTv &&
@@ -293,6 +358,9 @@ const WatcharrHistory = (() => {
       (e) => e.seasonNumber === it.season && e.episodeNumber === it.episode,
     );
     it.episodeStatus = ep ? ep.status : null; // null = episode not yet watched
+    const rowSec = toEpochSeconds(it.date);
+    const set = res.finishedByEp.get(epKey(it.season, it.episode));
+    it.episodeDateMatched = !!(rowSec != null && set && set.has(rowSec));
     it.episodeStatusKnown = true;
   }
 
@@ -309,6 +377,7 @@ const WatcharrHistory = (() => {
       matchError: it.matchError,
       episodeStatus: it.episodeStatus,
       episodeStatusKnown: it.episodeStatusKnown,
+      episodeDateMatched: it.episodeDateMatched,
       selected: it.selected,
       status: it.status,
       error: it.error,
@@ -546,14 +615,28 @@ const WatcharrHistory = (() => {
 
     // ---- Series – single watched episode ----
     if (it.isTv) {
-      // Series already exists (or was just created in this run): mark the
-      // specific episode. The exact Netflix date is always passed along
-      // (server field `watchedDate`).
-      if (watchedId) {
+      // Does the series already exist in Watcharr? A matched/rematched row or
+      // a series created earlier in this run already carries a watchedId.
+      let wid = watchedId;
+      if (!wid) {
+        // No watchedId known – check explicitly whether the series is on the
+        // watchlist before creating it (a duplicate would be an error).
+        try {
+          const show = await c.getWatchedShow(tmdbId);
+          const existing = show && show.watched && Number(show.watched.id);
+          if (existing) wid = existing;
+        } catch (_) {
+          // Check unavailable -> treat as new; creating a duplicate would
+          // surface as an error from Watcharr.
+        }
+      }
+      if (wid) {
+        // Series already exists: only mark the specific episode as FINISHED.
+        // The exact Netflix date is always passed along.
         if (it.season != null && it.episode != null) {
           try {
             await c.addWatchedEpisode(
-              watchedId,
+              wid,
               it.season,
               it.episode,
               "FINISHED",
@@ -566,40 +649,40 @@ const WatcharrHistory = (() => {
         }
         return { status: "updated", episodes: 0 };
       }
-      // New series: create via import endpoint -> "date added" = watchedDate,
-      // the episode gets its exact date.
+      // Series does NOT exist yet (only /watched endpoints, never /import):
+      // 1. add the series as WATCHING and pass the WATCHED date of the
+      //    episode we are about to add MINUS 1 minute as its "date added" –
+      //    so the series creation always precedes the episode being finished,
+      // 2. as soon as it is WATCHING, mark exactly this episode as FINISHED,
+      //    again passing the original watched date.
       try {
-        const resp = await c.importMedia({
+        const seriesDate = subtractMinutes(watchedDate, 1);
+        const created = await c.addWatched(
           tmdbId,
-          type: "tv",
-          status: "WATCHING",
-          datesWatched: watchedDate ? [watchedDate] : [],
-          watchedEpisodes:
-            it.season != null && it.episode != null
-              ? [
-                  {
-                    seasonNumber: it.season,
-                    episodeNumber: it.episode,
-                    status: "FINISHED",
-                    createdAt: watchedDate,
-                  },
-                ]
-              : [],
-        });
-        if (resp && resp.type === "IMPORT_SUCCESS") {
-          const wid = resp.watchedEntry && Number(resp.watchedEntry.id);
+          "tv",
+          "WATCHING",
+          seriesDate,
+        );
+        const newWid = created && Number(created.id);
+        if (!newWid) {
           return {
-            status: "imported",
-            watchedId: wid || null,
-            episodes: it.season != null && it.episode != null ? 1 : 0,
+            status: "error",
+            error: "Create failed (no watchedId in response)",
           };
         }
-        if (resp && resp.type === "IMPORT_EXISTS") {
-          return { status: "exists", error: "already in Watcharr" };
+        if (it.season != null && it.episode != null) {
+          await c.addWatchedEpisode(
+            newWid,
+            it.season,
+            it.episode,
+            "FINISHED",
+            watchedDate,
+          );
         }
         return {
-          status: "error",
-          error: "Import failed (" + (resp && resp.type) + ")",
+          status: "imported",
+          watchedId: newWid,
+          episodes: it.season != null && it.episode != null ? 1 : 0,
         };
       } catch (e) {
         return { status: "error", error: e.message };
@@ -617,26 +700,23 @@ const WatcharrHistory = (() => {
       }
       return { status: "updated" };
     }
-    // New movie: via import endpoint -> "date added" = watchedDate,
-    // "date watched" (datesWatched) = exact date.
+    // New movie: create directly as FINISHED via /watched. The exact Netflix
+    // date is passed as watchedDate (-> Watcharr sets "date added" to it).
     try {
-      const resp = await c.importMedia({
+      const created = await c.addWatched(
         tmdbId,
-        type: "movie",
-        status: "FINISHED",
-        datesWatched: watchedDate ? [watchedDate] : [],
-      });
-      if (resp && resp.type === "IMPORT_SUCCESS") {
-        const wid = resp.watchedEntry && Number(resp.watchedEntry.id);
-        return { status: "imported", watchedId: wid || null };
+        "movie",
+        "FINISHED",
+        watchedDate,
+      );
+      const wid = created && Number(created.id);
+      if (!wid) {
+        return {
+          status: "error",
+          error: "Create failed (no watchedId in response)",
+        };
       }
-      if (resp && resp.type === "IMPORT_EXISTS") {
-        return { status: "exists", error: "already in Watcharr" };
-      }
-      return {
-        status: "error",
-        error: "Import failed (" + (resp && resp.type) + ")",
-      };
+      return { status: "imported", watchedId: wid };
     } catch (e) {
       return { status: "error", error: e.message };
     }
@@ -677,15 +757,14 @@ const WatcharrHistory = (() => {
 
     // When several episodes of a series that does NOT exist in Watcharr yet
     // are imported in one run, only the first one may create the series
-    // (POST /import). Every further episode of the SAME series must reuse the
-    // newly created watched ID – otherwise /import answers "IMPORT_EXISTS" and
-    // the episode would be skipped although it was never marked as watched.
+    // (POST /watched). Every further episode of the SAME series must reuse the
+    // newly created watched ID – otherwise the series would be added twice.
     const createdSeries = new Map(); // tmdbId -> watchedId (created in this run)
 
     for (const it of ordered) {
       // Episode of a series that was just created above -> mark the specific
       // episode on the existing watched entry (addWatchedEpisode) instead of
-      // trying to import the series a second time.
+      // trying to add the series a second time.
       if (
         it.isTv &&
         it.match &&
