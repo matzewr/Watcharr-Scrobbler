@@ -1,8 +1,13 @@
 (function () {
   const STORAGE_KEY = "watcharr_locale";
   const FALLBACK_LOCALE = "en";
-  const SUPPORTED_LOCALES = ["en", "de", "fr"];
-  const LANGUAGE_NAMES = { en: "English", de: "Deutsch", fr: "Français" };
+  const SUPPORTED_LOCALES = ["en", "de", "fr", "es"];
+  const LANGUAGE_NAMES = {
+    en: "English",
+    de: "Deutsch",
+    fr: "Français",
+    es: "Español",
+  };
 
   function normalizeLocale(locale) {
     if (!locale) return FALLBACK_LOCALE;

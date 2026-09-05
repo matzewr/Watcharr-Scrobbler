@@ -54,11 +54,12 @@ async function t(key, params = {}) {
 function populateLanguageOptions() {
   if (!els.language) return;
   const loc = I18NApi.locale || window.watcharrI18nLocale || {};
-  const supported = loc.SUPPORTED_LOCALES || ["en", "de", "fr"];
+  const supported = loc.SUPPORTED_LOCALES || ["en", "de", "fr", "es"];
   const names = loc.LANGUAGE_NAMES || {
     en: "English",
     de: "Deutsch",
     fr: "Français",
+    es: "Español",
   };
   els.language.innerHTML = "";
   supported.forEach((code) => {
