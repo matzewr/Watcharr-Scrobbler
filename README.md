@@ -95,4 +95,4 @@ service tab.
 
 ## AI Disclosure
 
-> **AI-generated:** This project was created entirely by AI. I haven’t had time yet to review the code in detail myself. A thorough personal review is planned. However, the extension currently appears to be working without any errors.
+> **AI-assisted:** The largest part of this codebase has been personally reviewed and verified. Some parts, however, were written by AI and have not yet been checked by me. A thorough personal review of these parts is planned. The extension currently appears to be working without any errors.
